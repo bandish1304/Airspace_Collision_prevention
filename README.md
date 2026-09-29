@@ -59,7 +59,7 @@ The largest connected component contains about half of the positives. This is a 
 
 This example follows one aircraft pair over its longest positive encounter. It illustrates how a single pair can produce many positive observations while remaining within the current thresholds; it does not establish whether the close flight was intentional or unsafe.
 
-**Step 4 — Geometry and location.** At the observation level, 51.5% of the current positives have non-positive closing speed, meaning the aircraft were not getting closer at that observation. An encounter-level heuristic classified 1,228 encounters as separating, 738 as crossing, 227 as head-on, 185 as overtaking, and 16 as parallel/formation. These are descriptive categories based on median bearing difference and closing speed, not verified operational labels.
+**Geometry and location.** At the observation level, 51.5% of the current positives have non-positive closing speed, meaning the aircraft were not getting closer at that observation. An encounter-level heuristic classified 1,228 encounters as separating, 738 as crossing, 227 as head-on, 185 as overtaking, and 16 as parallel/formation. These are descriptive categories based on median bearing difference and closing speed, not verified operational labels.
 
 Encounter locations cluster around the Los Angeles basin, with a smaller concentration near San Diego. The median distance from an encounter midpoint to the nearest of six selected airports is 9.2 nautical miles; 53.2% are within 10 nautical miles. This map contains positive encounters only, so it does not establish that these locations have higher risk rates than areas with more safe traffic.
 
@@ -90,4 +90,6 @@ The earlier single-snapshot dataset contained 8,309 pair rows and 55 positives (
 
 The multi-frame analysis shows that the positive class is both rare and temporally repeated. It also indicates that many observations meeting the current proximity rule are not converging. These findings motivate careful temporal splitting and a discussion about what the project’s risk label is intended to represent.
 
-The results are preliminary because they come from one 58-minute Southern California window. Further analysis is needed across more collection times and dates, including safe-versus-risk comparisons of kinematic features and class rates by aircraft, time window, and geographic region. No alternative label has been adopted, and no conclusions about actual collision events can be drawn from the current rule alone.
+The results are preliminary because they come from one 58-minute Southern California window. Further analysis is needed across more collection times and dates, including safe-versus-risk comparisons of kinematic features and class rates by aircraft, time window, and geographic region. No alternative label has been adopted, and no conclusions about actual collision events can be drawn from the current rule alone.(More to come)
+
+
