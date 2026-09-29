@@ -5,7 +5,7 @@
 This project investigates whether machine-learning models can identify potential aircraft-pair collision risk from Automatic Dependent Surveillance-Broadcast (ADS-B) telemetry. The research focuses on Southern California airspace and is designed to compare a graph neural network baseline with a Temporal Fusion Transformer (TFT) once sufficient historical trajectory data has been collected.
 
 The study first examined imbalance-aware classification strategies for the rare collision-risk event, and then extended the workflow to graph-based representations of aircraft interactions. The work in this phase was designed to evaluate how class imbalance affects safety-critical detection and to ensure that the later graph formulation preserves the same collision-risk signals used in the base feature pipeline.
-
+An initial imbalance study used a single snapshot. The project has since added a 58-minute backfill, allowing repeated aircraft-pair observations, encounter duration, trajectory geometry, and candidate label definitions to be examined. These newer analyses are exploratory and use the existing rule-based label; they do not identify confirmed collision events.
 ## Section I
 ### Introduction
 
@@ -28,64 +28,66 @@ This section reflects the practical work carried out to select a more robust cla
 ### Proposed Methodology
 
 #### Dataset description and Preprocessing
-The proposed methodology begins with ADS-B state-vector data collected from the OpenSky Network. In the beginning the data-ingestion process was established fothe Southern California study area, and the available fields, units, and data
-quality issues were documented. NTSB accident records were collected separately for background context.
+The methodology uses ADS-B state-vector data collected from the OpenSky Network for Southern California. The data dictionary records the available fields, units, and known data-quality issues. NTSB accident records were collected separately for background context. A recent authenticated backfill added 349 frames over a 58-minute period; this supports short-window encounter analysis, but it is not a substitute for the longer historical record needed to study different dates and seasons.
 
 ##### Feature Engineering
-There was also the methodology converted individual aircraft observations into aircraft pairs within 50 nautical miles. For each pair, the pipeline calculates horizontal distance, closing speed, bearing difference, vertical separation,and time to the closest point of approach. Ground aircraft and stale position
-reports are filtered before pair construction. Each pair is assigned a rule-based Risk label when the lateral separation is at most 5 nautical miles and the vertical separation is at most 1,000 feet. The final step is exploratory analysis of class balance, missing values, invalid values, outliers, correlations, and label leakage. This methodology establishes the data-processing foundation for future temporal modeling, but historical snapshots are still required before training a GNN or TFT model.
+The pipeline converts aircraft observations into pairs within 50 nautical miles. For each pair, it calculates horizontal distance, closing speed, bearing difference, vertical separation, and time to the closest point of approach. Ground aircraft and stale position reports are filtered before pair construction. Under the current rule, a pair is labeled risk when lateral separation is at most 5 nautical miles and vertical separation is at most 1,000 feet. Pair features are built within each snapshot so aircraft are not paired across different times. Further data-quality and multi-day analysis is still needed before drawing general conclusions or evaluating temporal models.
 
 The methodology prioritised imbalance-aware evaluation and then represented aircraft as interacting nodes with edge attributes that reflect distance, closing speed, and time-to-CPA. This setup supports graph-based learning without changing the original modeling foundation already described in the file.The graph construction step was designed to preserve the key collision-risk cues from the pair-feature pipeline while adding the relational structure needed for a graph neural network baseline.
-
 ## Section IV
 ### Results and Discussion
 
-The processed dataset contains 8,309 aircraft pairs, including 8,254 pairs labeled Not risk (99.338%) and 55 pairs labeled Risk (0.662%) using the separation rule. The exploratory analysis found no missing values or invalid pair measurements, but identified outliers in vertical separation, closing speed, and time to CPA. These results validate the initial pipeline, although the single-snapshot dataset is not yet sufficient for temporal model training.
+#### Progress on the Revised Plan: Steps 1–5
 
-The findings showed that the class imbalance required careful metric selection, and the graph construction confirmed that proximity-based edges preserve the key collision-risk signals in a format suitable for GNN learning.These results show that the work completed in this phase was not only preparing the data for modeling, but also validating that the graph representation retained the features most relevant to identifying risky aircraft encounters.
+**Step 1 — Backfill data collection.** An authenticated OpenSky backfill collected 349 frames at approximately 10-second spacing across a 58-minute window. The resulting pair-feature dataset contains 4,158,918 pair-observations. This provides a short continuous sample for studying encounters, although it does not cover multiple days or seasons.
 
-#### Collision-Risk Class Distribution
+**Step 2 — Professor follow-up.** A progress update and questions about the risk-label definition were prepared for discussion with the professor. The current labels have not been changed; a final definition remains subject to his guidance.
 
-<img src="experiments/figures/collision_risk_class_distribution.png" alt="Collision-risk class distribution" width="500">
+**Step 3 — Are the positive observations distinct situations?** The current separation rule labels 24,016 pair-observations as positive, or 0.577% of all pair-observations. Grouping the same aircraft pair into one encounter when positive observations are no more than 60 seconds apart gives 2,394 encounters, approximately 10 positive rows per encounter. The median encounter contains 7 observations and lasts 60 seconds. The longest lasts about 20.5 minutes and contributes 112 positive observations. This shows that positive rows are repeated measurements, not all independent situations.
 
-#### Pair-Feature Relationships
+Connected-component analysis found 508 components. The largest contains 11,882 positive observations (49.5%); the top five contain 67.5%, and the top 25 contain 79.8%. These components can join through chains of aircraft and frames, so they should not be interpreted as individual real-world incidents. They do show why a random row-level train/test split could place related observations in both sets.
 
-<img src="experiments/figures/pair_feature_relationships.png" alt="Pair-feature relationships" width="650">
+![Positive observations per encounter and encounter duration](experiments/figures/step3_encounter_anatomy.png)
 
-The class-distribution figure shows that the dataset contains far more Not risk pairs than Risk pairs, which will require imbalance-aware evaluation in later weeks. The relationship plots provide an initial view of how aircraft separation and movement-related features vary across the generated pairs.
+This figure shows how many positive rows each encounter contributes and how long those encounters last. Most are short, while a few persistent encounters create many repeated rows.
 
-#### Pair-Feature Distributions by Label
+![Concentration of positive observations across connected components](experiments/figures/step3_positive_concentration.png)
 
-<img src="experiments/figures/pair_feature_distributions_by_label.png" alt="Pair-feature distributions split by collision-risk label" width="750">
+The largest connected component contains about half of the positives. This is a warning about dependence in the data, not evidence that half the positives belong to one physical event.
 
-Splitting each feature by label makes the class imbalance easier to see in context: risk pairs cluster tightly at low lateral distance and low vertical separation, while not-risk pairs spread across the full range of both features. This separation is a big part of why the rule-based label is learnable at all despite being so rare.
+![Separation over time for the longest positive encounter](experiments/figures/step3_single_encounter.png)
 
-#### Pair-Feature Correlations
+This example follows one aircraft pair over its longest positive encounter. It illustrates how a single pair can produce many positive observations while remaining within the current thresholds; it does not establish whether the close flight was intentional or unsafe.
 
-<img src="experiments/figures/pair_feature_correlations.png" alt="Pearson and Spearman correlation heatmaps for pair features" width="800">
+**Step 4 — Geometry and location.** At the observation level, 51.5% of the current positives have non-positive closing speed, meaning the aircraft were not getting closer at that observation. An encounter-level heuristic classified 1,228 encounters as separating, 738 as crossing, 227 as head-on, 185 as overtaking, and 16 as parallel/formation. These are descriptive categories based on median bearing difference and closing speed, not verified operational labels.
 
-Both the Pearson and Spearman correlation heatmaps show that no single feature is strongly correlated with the collision-risk label on its own, which is expected for a rule that combines lateral and vertical separation jointly rather than relying on one variable. Closing speed and bearing difference show a moderate relationship with each other, which reflects how aircraft heading and closing behavior are physically linked.
+Encounter locations cluster around the Los Angeles basin, with a smaller concentration near San Diego. The median distance from an encounter midpoint to the nearest of six selected airports is 9.2 nautical miles; 53.2% are within 10 nautical miles. This map contains positive encounters only, so it does not establish that these locations have higher risk rates than areas with more safe traffic.
 
-#### Outlier and Data-Quality Mismatches
+![Geographic locations of positive encounters and distance to the nearest selected airport](experiments/figures/step4_geography.png)
 
-<img src="experiments/figures/pair_feature_mismatches.png" alt="IQR outlier counts and data quality range-check mismatches" width="800">
+This map shows where the positive encounters occurred during this collection window. Its geographic clusters are descriptive; a safe-traffic denominator is needed for regional risk-rate comparisons.
 
-The outlier check found no invalid pairs for lateral distance or bearing difference, but flagged 346 pairs for time to CPA, 184 for vertical separation, and 139 for closing speed using the IQR rule. Separately, the range-check pass found no negative distances, no out-of-range bearings, and no duplicate pairs, with the only notable mismatch being 4,091 pairs where time to CPA was infinite because the aircraft were on non-converging paths. This distinction matters because it separates genuine data-quality problems, of which there were none, from expected physical outcomes like a pair that will never reach closest approach.
+Using all pair-observations as denominators, the current-rule positive rate is 1.70% below 3,000 feet, 0.41% from 3,000 to 10,000 feet, 0.014% from 10,000 to 18,000 feet, and 0.011% at or above 18,000 feet. The higher rate at low altitude may reflect routine traffic patterns as well as the behavior of the current label; this one window cannot establish a general safety relationship.
 
-#### SMOTE Training Run
+![Current-rule positive rate by altitude band](experiments/figures/step4_altitude_bands.png)
 
-<img src="experiments/figures/SMOTE.png" alt="SMOTE logistic regression training output" width="650">
+The rate is highest in the below-3,000-foot band and falls sharply at higher altitudes. The logarithmic vertical axis makes the small high-altitude rates visible.
 
-#### Focal Loss Training Run
+![Representative risky and non-positive aircraft-pair trajectories](experiments/figures/step4_trajectories.png)
 
-<img src="experiments/figures/focal_loss.png" alt="Focal loss logistic regression training output" width="650">
+These selected paths illustrate several movement patterns among positive encounters and one nearby pair that did not meet both current thresholds. They are examples for visual inspection, not a representative sample of every positive or safe pair.
 
-#### MLflow Experiment Runs
+**Step 5 — Label-rule sensitivity.** The current rule produces 24,016 positive observations. Requiring positive closing speed reduces this to 12,360. Adding a time-to-CPA limit of 5, 10, 15, or 30 minutes gives 11,183, 11,929, 12,152, and 12,299 observations. Requiring convergence makes the largest difference in this comparison; changing the tested CPA horizon makes a smaller difference.
 
-<img src="experiments/figures/MLFlow1.png" alt="MLflow runs for the imbalance study" width="750">
+![Positive observations under the current and candidate label rules](experiments/figures/step5_label_rule_comparison.png)
 
-The SMOTE run reached a recall of 1.0 and an AUROC of 0.9994, while the focal loss run reached an AUROC of 0.9949 but a recall of 0.0, missing every risk case in that run. The MLflow runs view shows all eight logged experiments for the imbalance study, which made it straightforward to compare strategies side by side before selecting SMOTE as the strategy to carry forward.
+This comparison shows how the positive count changes when convergence and a CPA time horizon are added. The candidates do not test predicted separation distance at CPA, so they are not yet complete alternative risk labels. The existing labels remain unchanged pending discussion with the professor.
+
+The earlier single-snapshot dataset contained 8,309 pair rows and 55 positives (0.662%). Its class-distribution, feature-EDA, and logistic-regression imbalance figures are not shown here as current multi-frame results. Those earlier experiments remain historical context; model performance should be revisited using a suitable temporal split and the label definition agreed upon for the next stage.
 
 ## Section V
 ### Conclusion
-### (More to come...)
+
+The multi-frame analysis shows that the positive class is both rare and temporally repeated. It also indicates that many observations meeting the current proximity rule are not converging. These findings motivate careful temporal splitting and a discussion about what the project’s risk label is intended to represent.
+
+The results are preliminary because they come from one 58-minute Southern California window. Further analysis is needed across more collection times and dates, including safe-versus-risk comparisons of kinematic features and class rates by aircraft, time window, and geographic region. No alternative label has been adopted, and no conclusions about actual collision events can be drawn from the current rule alone.
