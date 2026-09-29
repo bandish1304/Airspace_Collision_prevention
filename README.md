@@ -37,13 +37,9 @@ The methodology prioritised imbalance-aware evaluation and then represented airc
 ## Section IV
 ### Results and Discussion
 
-#### Progress on the Revised Plan: Steps 1–5
+**Backfill data collection.** An authenticated OpenSky backfill collected 349 frames at approximately 10-second spacing across a 58-minute window. The resulting pair-feature dataset contains 4,158,918 pair-observations. This provides a short continuous sample for studying encounters, although it does not cover multiple days or seasons.
 
-**Step 1 — Backfill data collection.** An authenticated OpenSky backfill collected 349 frames at approximately 10-second spacing across a 58-minute window. The resulting pair-feature dataset contains 4,158,918 pair-observations. This provides a short continuous sample for studying encounters, although it does not cover multiple days or seasons.
-
-**Step 2 — Professor follow-up.** A progress update and questions about the risk-label definition were prepared for discussion with the professor. The current labels have not been changed; a final definition remains subject to his guidance.
-
-**Step 3 — Are the positive observations distinct situations?** The current separation rule labels 24,016 pair-observations as positive, or 0.577% of all pair-observations. Grouping the same aircraft pair into one encounter when positive observations are no more than 60 seconds apart gives 2,394 encounters, approximately 10 positive rows per encounter. The median encounter contains 7 observations and lasts 60 seconds. The longest lasts about 20.5 minutes and contributes 112 positive observations. This shows that positive rows are repeated measurements, not all independent situations.
+**Are the positive observations distinct situations?** The current separation rule labels 24,016 pair-observations as positive, or 0.577% of all pair-observations. Grouping the same aircraft pair into one encounter when positive observations are no more than 60 seconds apart gives 2,394 encounters, approximately 10 positive rows per encounter. The median encounter contains 7 observations and lasts 60 seconds. The longest lasts about 20.5 minutes and contributes 112 positive observations. This shows that positive rows are repeated measurements, not all independent situations.
 
 Connected-component analysis found 508 components. The largest contains 11,882 positive observations (49.5%); the top five contain 67.5%, and the top 25 contain 79.8%. These components can join through chains of aircraft and frames, so they should not be interpreted as individual real-world incidents. They do show why a random row-level train/test split could place related observations in both sets.
 
