@@ -86,6 +86,6 @@ The earlier single-snapshot dataset contained 8,309 pair rows and 55 positives (
 
 The multi-frame analysis shows that the positive class is both rare and temporally repeated. It also indicates that many observations meeting the current proximity rule are not converging. These findings motivate careful temporal splitting and a discussion about what the project’s risk label is intended to represent.
 
-The results are preliminary because they come from one 58-minute Southern California window. Further analysis is needed across more collection times and dates, including safe-versus-risk comparisons of kinematic features and class rates by aircraft, time window, and geographic region. No alternative label has been adopted, and no conclusions about actual collision events can be drawn from the current rule alone.(More to come)
+The results are preliminary because they come from one 58-minute Southern California window. Further analysis is needed across more collection times and dates, including safe-versus-risk comparisons of kinematic features and class rates by aircraft, time window, and geographic region. No alternative label has been adopted, and no conclusions about actual collision events can be drawn from the current rule alone.(More to come...)
 
 
