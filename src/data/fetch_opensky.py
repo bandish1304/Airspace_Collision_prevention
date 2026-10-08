@@ -86,10 +86,23 @@ def get_access_token(client_id: str, client_secret: str) -> str:
     return response.json()["access_token"]
 
 
-def fetch_states(bbox: dict[str, float], token: str | None = None) -> dict:
-    """Fetch a snapshot of state vectors within a bounding box."""
+def fetch_states(
+    bbox: dict[str, float],
+    token: str | None = None,
+    at_time: int | None = None,
+) -> dict:
+    """Fetch a snapshot of state vectors within a bounding box.
+
+    Passing `at_time` (Unix seconds) requests a past snapshot instead of the
+    current one. Authenticated access reaches back one hour and snaps to the
+    nearest 5-second boundary; older timestamps are refused with HTTP 403, not
+    400 as the API documentation states.
+    """
     headers = {"Authorization": f"Bearer {token}"} if token else {}
-    response = requests.get(STATES_URL, params=bbox, headers=headers, timeout=60)
+    params = dict(bbox)
+    if at_time is not None:
+        params["time"] = int(at_time)
+    response = requests.get(STATES_URL, params=params, headers=headers, timeout=60)
     response.raise_for_status()
     return response.json()
 

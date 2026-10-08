@@ -219,7 +219,7 @@ def _select_altitude(aircraft: pd.Series) -> float:
 
 
 if __name__ == "__main__":
-    sample_path = "data/raw/states_socal_1787874146.csv"
+    sample_path = "data/raw/sessions/states_socal_backfill_1790375809.csv"
     sample_snapshot = pd.read_csv(sample_path)
     sample_snapshot = sample_snapshot.loc[sample_snapshot["snapshot_time"] == int(sample_snapshot["snapshot_time"].iloc[0])].copy()
     validation = validate_snapshot_graph(sample_snapshot, max_distance_nm=50.0)

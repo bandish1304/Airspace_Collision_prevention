@@ -19,6 +19,11 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 
+# A missed conflict is treated as five times worse than a false alarm. The
+# ratio is the project's, set in the Week 5 plan; it is a parameter so a
+# sensitivity analysis can vary it.
+DEFAULT_FALSE_NEGATIVE_COST = 5.0
+
 
 # This function turns model probabilities into a single, consistent set of
 # classification metrics for the imbalance study and later model comparisons.
@@ -28,6 +33,7 @@ def compute_classification_metrics(
     y_true: np.ndarray,
     y_prob: np.ndarray,
     threshold: float = 0.5,
+    false_negative_cost: float = DEFAULT_FALSE_NEGATIVE_COST,
 ) -> dict[str, float | int | dict[str, Any]]:
     """Return the core metrics used across the project comparison harness."""
     y_true = np.asarray(y_true, dtype=int)
@@ -55,6 +61,15 @@ def compute_classification_metrics(
     false_negative_rate = float(fn / actual_positive) if actual_positive else 0.0
     false_positive_rate = float(fp / actual_negative) if actual_negative else 0.0
 
+    # Cost of the errors, with each false alarm costing 1. The normalised form
+    # divides by the cost of never predicting risk at all, so 0 is perfect and
+    # 1 is no better than ignoring the problem -- comparable across test sets
+    # of different sizes. It can exceed 1 when false alarms pile up.
+    cost = false_negative_cost * fn + fp
+    normalised_cost = (
+        float(cost / (false_negative_cost * actual_positive)) if actual_positive else 0.0
+    )
+
     return {
         "threshold": float(threshold),
         "accuracy": float((tp + tn) / len(y_true)) if len(y_true) else 0.0,
@@ -65,6 +80,15 @@ def compute_classification_metrics(
         "average_precision": float(average_precision),
         "false_negative_rate": float(false_negative_rate),
         "false_positive_rate": float(false_positive_rate),
+        "false_negative_cost": float(false_negative_cost),
+        "misclassification_cost": float(cost),
+        "normalised_cost": normalised_cost,
+        # The counts again as plain numbers: the dictionary below is kept for
+        # existing readers, but MLflow only logs scalars and silently skipped it.
+        "true_positives": int(tp),
+        "false_negatives": int(fn),
+        "false_positives": int(fp),
+        "true_negatives": int(tn),
         "confusion_matrix": {"tn": int(tn), "fp": int(fp), "fn": int(fn), "tp": int(tp)},
     }
 
@@ -96,9 +120,12 @@ def build_evaluation_harness(
     y_true: np.ndarray,
     y_prob: np.ndarray,
     threshold: float = 0.5,
+    false_negative_cost: float = DEFAULT_FALSE_NEGATIVE_COST,
 ) -> dict[str, Any]:
     """Bundle classification metrics and PR-curve data into one consistent report."""
-    metrics = compute_classification_metrics(y_true, y_prob, threshold=threshold)
+    metrics = compute_classification_metrics(
+        y_true, y_prob, threshold=threshold, false_negative_cost=false_negative_cost
+    )
     pr_curve = precision_recall_curve_data(y_true, y_prob)
     metrics["pr_curve"] = pr_curve
     return metrics

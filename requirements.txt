@@ -7,4 +7,6 @@ pandas>=3.0
 python-dotenv>=1.2
 requests>=2.34
 scikit-learn>=1.9
+scipy>=1.14
 torch
+torch_geometric>=2.8

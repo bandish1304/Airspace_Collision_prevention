@@ -7,62 +7,27 @@ from pathlib import Path
 
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
+from src.baselines.data import DEFAULT_PAIRS_PATH, load_dataset, split_dataset
 from src.evaluation.harness import build_evaluation_harness
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DATA_PATH = PROJECT_ROOT / "data" / "processed" / "states_socal_1787874146_pairs_labeled.csv"
+DEFAULT_DATA_PATH = DEFAULT_PAIRS_PATH
 DEFAULT_MODEL_PATH = PROJECT_ROOT / "models" / "week3_logistic_regression_baseline.joblib"
 
-FEATURE_COLUMNS = [
-    "lateral_distance_nm",
-    "closing_speed_mps",
-    "bearing_difference_deg",
-    "vertical_separation_m",
-    "time_to_cpa_s",
-]
-
-
-# This function loads the labeled pair dataset and keeps only the engineered pair
-# features needed for the Week 3 baseline comparison. It excludes the target and
-# metadata columns so the model learns from the actual collision-risk signals.
-# Some engineered features, such as time_to_cpa_s, can be infinite when no future
-# closest approach exists; those rows are dropped because scikit-learn cannot fit
-# on non-finite inputs.
-def load_dataset(data_path: Path) -> tuple[pd.DataFrame, pd.Series]:
-    df = pd.read_csv(data_path)
-    required_columns = [*FEATURE_COLUMNS, "collision_risk"]
-    missing = [column for column in required_columns if column not in df.columns]
-    if missing:
-        raise ValueError(f"Missing required columns for baseline training: {missing}")
-
-    clean_df = df[required_columns].copy()
-    for column in FEATURE_COLUMNS:
-        clean_df[column] = pd.to_numeric(clean_df[column], errors="coerce")
-    clean_df = clean_df.replace([float("inf"), float("-inf")], float("nan")).dropna().copy()
-    X = clean_df[FEATURE_COLUMNS]
-    y = clean_df["collision_risk"].astype(int)
-    return X, y
-
-
-# This function trains a standard logistic regression pipeline using a train/test
-# split with stratification. It does not apply SMOTE, focal loss, or class weighting
-# so it represents the plain baseline required by Week 3 step 2.
+# This function trains a standard logistic regression pipeline on data that
+# arrives already split, so every strategy is scored on the same rows. It does
+# not apply SMOTE, focal loss, or class weighting, so it represents the plain
+# baseline required by Week 3 step 2.
 def train_baseline_model(
-    X: pd.DataFrame,
-    y: pd.Series,
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    X_eval: pd.DataFrame,
+    y_eval: pd.Series,
     random_state: int = 42,
-) -> tuple[Pipeline, dict, tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]]:
-    X_train, X_test, y_train, y_test = train_test_split(
-        X,
-        y,
-        test_size=0.2,
-        random_state=random_state,
-        stratify=y,
-    )
+) -> tuple[Pipeline, dict]:
 
     pipeline = Pipeline(
         steps=[
@@ -78,9 +43,9 @@ def train_baseline_model(
     )
     pipeline.fit(X_train, y_train)
 
-    y_prob = pipeline.predict_proba(X_test)[:, 1]
-    metrics = build_evaluation_harness(y_test.to_numpy(), y_prob, threshold=0.5)
-    return pipeline, metrics, (X_train, X_test, y_train, y_test)
+    y_prob = pipeline.predict_proba(X_eval)[:, 1]
+    metrics = build_evaluation_harness(y_eval.to_numpy(), y_prob, threshold=0.5)
+    return pipeline, metrics
 
 
 # This function saves the trained classifier to disk so it can be reused for later
@@ -108,8 +73,9 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    X, y = load_dataset(args.data_path)
-    model, metrics, _ = train_baseline_model(X, y)
+    X, y, times = load_dataset(args.data_path)
+    parts = split_dataset(X, y, times)
+    model, metrics = train_baseline_model(*parts["train"], *parts["validation"])
     save_model(model, args.output_path)
 
     print(f"Dataset rows: {len(X)}")

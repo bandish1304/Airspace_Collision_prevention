@@ -6,44 +6,15 @@ import argparse
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import torch
-from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
+from src.baselines.data import DEFAULT_PAIRS_PATH, load_dataset, split_dataset
 from src.evaluation.harness import build_evaluation_harness
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DATA_PATH = PROJECT_ROOT / "data" / "processed" / "states_socal_1787874146_pairs_labeled.csv"
+DEFAULT_DATA_PATH = DEFAULT_PAIRS_PATH
 DEFAULT_MODEL_PATH = PROJECT_ROOT / "models" / "week3_logistic_regression_focal_loss.pt"
-
-FEATURE_COLUMNS = [
-    "lateral_distance_nm",
-    "closing_speed_mps",
-    "bearing_difference_deg",
-    "vertical_separation_m",
-    "time_to_cpa_s",
-]
-
-
-# This function loads the same cleaned feature matrix used by the earlier Week 3
-# baselines so the only difference is the imbalance-handling objective. Non-finite
-# values are removed before training because focal loss still requires valid numeric input.
-def load_dataset(data_path: Path) -> tuple[np.ndarray, np.ndarray]:
-    df = pd.read_csv(data_path)
-    required_columns = [*FEATURE_COLUMNS, "collision_risk"]
-    missing = [column for column in required_columns if column not in df.columns]
-    if missing:
-        raise ValueError(f"Missing required columns for training: {missing}")
-
-    clean_df = df[required_columns].copy()
-    for column in FEATURE_COLUMNS:
-        clean_df[column] = pd.to_numeric(clean_df[column], errors="coerce")
-    clean_df = clean_df.replace([float("inf"), float("-inf")], float("nan")).dropna().copy()
-    X = clean_df[FEATURE_COLUMNS].to_numpy(dtype=float)
-    y = clean_df["collision_risk"].astype(int).to_numpy(dtype=int)
-    return X, y
-
 
 # This function defines the focal loss used for the rare positive class. The model
 # is asked to pay more attention to hard, minority-class examples instead of simply
@@ -68,23 +39,18 @@ def focal_loss(
 # objective. This matches the Week 3 requirement to compare a focal-loss version
 # against the plain and SMOTE baselines using the same evaluation harness.
 def train_focal_loss_model(
-    X: np.ndarray,
-    y: np.ndarray,
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_eval: np.ndarray,
+    y_eval: np.ndarray,
     random_state: int = 42,
     learning_rate: float = 0.01,
     epochs: int = 400,
 ) -> tuple[torch.nn.Module, dict]:
-    X_train, X_test, y_train, y_test = train_test_split(
-        X,
-        y,
-        test_size=0.2,
-        random_state=random_state,
-        stratify=y,
-    )
-
+    torch.manual_seed(random_state)
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
+    X_eval_scaled = scaler.transform(X_eval)
 
     model = torch.nn.Sequential(
         torch.nn.Linear(X_train_scaled.shape[1], 1),
@@ -93,8 +59,7 @@ def train_focal_loss_model(
 
     X_train_t = torch.tensor(X_train_scaled, dtype=torch.float32)
     y_train_t = torch.tensor(y_train, dtype=torch.float32).view(-1, 1)
-    X_test_t = torch.tensor(X_test_scaled, dtype=torch.float32)
-    y_test_t = torch.tensor(y_test, dtype=torch.float32).view(-1, 1)
+    X_eval_t = torch.tensor(X_eval_scaled, dtype=torch.float32)
 
     for _ in range(epochs):
         model.train()
@@ -106,10 +71,10 @@ def train_focal_loss_model(
 
     model.eval()
     with torch.no_grad():
-        test_logits = model(X_test_t)
-        y_prob = torch.sigmoid(test_logits).numpy().ravel()
+        eval_logits = model(X_eval_t)
+        y_prob = torch.sigmoid(eval_logits).numpy().ravel()
 
-    metrics = build_evaluation_harness(y_test, y_prob, threshold=0.5)
+    metrics = build_evaluation_harness(y_eval, y_prob, threshold=0.5)
     return model, metrics
 
 
@@ -136,12 +101,16 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    X, y = load_dataset(args.data_path)
-    model, metrics = train_focal_loss_model(X, y)
+    features, labels, times = load_dataset(args.data_path)
+    parts = split_dataset(features, labels, times)
+    (X_train, y_train), (X_eval, y_eval) = parts["train"], parts["validation"]
+    model, metrics = train_focal_loss_model(
+        X_train.to_numpy(), y_train.to_numpy(), X_eval.to_numpy(), y_eval.to_numpy()
+    )
     save_model(model, args.output_path)
 
-    print(f"Dataset rows: {len(X)}")
-    print(f"Positive rate: {float(y.mean()):.4f}")
+    print(f"Dataset rows: {len(features)}")
+    print(f"Positive rate: {float(labels.mean()):.4f}")
     print(f"Model saved to: {args.output_path}")
     print(f"Precision: {metrics['precision']:.4f}")
     print(f"Recall: {metrics['recall']:.4f}")

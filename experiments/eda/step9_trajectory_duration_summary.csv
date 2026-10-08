@@ -1,0 +1,5 @@
+censoring_status,segments,median_observed_duration_seconds,q25_observed_duration_seconds,q75_observed_duration_seconds,kaplan_meier_median_seconds_excluding_left_censored,segments_in_kaplan_meier,left_censored_excluded_from_kaplan_meier
+complete,344,960.0,267.5,1470.0,1410.0,619,254
+left,231,830.0,395.0,1410.0,1410.0,619,254
+right,275,920.0,365.0,1600.0,1410.0,619,254
+both,23,3480.0,3480.0,3480.0,1410.0,619,254

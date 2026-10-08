@@ -49,7 +49,7 @@ class GraphSnapshotDataset:
 
 
 if __name__ == "__main__":
-    sample = pd.read_csv("data/raw/states_socal_1787874146.csv")
+    sample = pd.read_csv("data/raw/sessions/states_socal_backfill_1790375809.csv")
     dataset = GraphSnapshotDataset(sample, max_distance_nm=50.0)
     first = dataset[0]
     print(f"num_snapshots={len(dataset)}")

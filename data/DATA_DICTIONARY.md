@@ -24,7 +24,7 @@ new sources or fields arrive.
 | Endpoint | `https://opensky-network.org/api/states/all` |
 | Auth | OAuth2 client credentials (basic auth removed March 2026) |
 | Bounding box | `lamin=32.5, lomin=-120.5, lamax=35.5, lomax=-116.0` (Southern California) |
-| Retrieved by | [`src/data/fetch_opensky.py`](../src/data/fetch_opensky.py) |
+| Retrieved by | [`src/data/fetch_opensky.py`](../src/data/fetch_opensky.py) — one snapshot<br>[`src/data/backfill_opensky.py`](../src/data/backfill_opensky.py) — the past hour<br>[`src/data/poll_opensky.py`](../src/data/poll_opensky.py) — a forward session |
 | Granularity | One row per aircraft per snapshot |
 | Sample file | `data/raw/states_socal_1787874146.csv` — 302 aircraft, 2026-08-27 16:42:26 local |
 
@@ -33,6 +33,43 @@ new sources or fields arrive.
 recent vectors at 10-second resolution. Neither provides the multi-month
 archive Phase 1 needs — that requires OpenSky's **Trino** interface, which is a
 separate approved access path.
+
+Credits are a daily quota, not a charge: 400/day anonymous, 4,000 registered,
+8,000 for members feeding a receiver. A request over this bounding box costs 1.
+
+### Multi-frame collection
+
+A single snapshot supports pair features but nothing that needs time —
+trajectories, how long an aircraft was observed, or whether the same encounter
+recurs across frames. Two collectors produce frame sequences instead, both
+writing to `data/raw/sessions/` with the same columns as a single pull.
+
+| | `backfill_opensky.py` | `poll_opensky.py` |
+|---|---|---|
+| Direction | Walks the past hour | Records forward |
+| Wait | Minutes | Real time |
+| Spacing | Exactly even — timestamps are requested | Ragged — whatever the API returns |
+| Good for | One continuous window | Sampling across times of day |
+
+**The backfill walks oldest-first, and the order is not arbitrary.** The
+one-hour window slides forward while the run proceeds, so frames nearest
+expiry are collected first and every later request is younger than the one
+before it. Newest-first would guarantee the oldest frames aged out before the
+run reached them.
+
+**Requests older than one hour are refused with HTTP 403**, not the 400 the API
+documentation states. Code that assumes 400 will read an expired window as an
+authentication failure. Requested timestamps are snapped to the nearest
+5-second boundary, so neighbouring requests can resolve to the same frame;
+both collectors discard duplicates but the credit is still spent.
+
+| Collected | File | Frames | Span | Aircraft |
+|---|---|---|---|---|
+| 2026-09-25 14:38:50–15:36:50 PDT | `states_socal_backfill_1790375809.csv` | 349 at 10 s | 58 min | 752 airborne |
+| 2026-10-07 06:39–07:09 PDT | `states_socal_session_1791380397_06-39AM.csv` | 167 | 30.1 min | 239 airborne |
+| 2026-10-07 10:18–10:48 PDT | `states_socal_session_1791393504_10-18AM.csv` | 145 | 30 min | 596 airborne |
+| 2026-10-07 14:30–15:00 PDT | `states_socal_session_1791408650_02-30PM.csv` | 168 | 30 min | 515 airborne |
+| 2026-10-07 19:39–20:09 PDT | `states_socal_session_1791427160_07-39PM.csv` | 169 | 30.2 min | 344 airborne |
 
 ### Fields
 
@@ -89,7 +126,7 @@ gate whether a report is fresh enough to trust.
 
 | Issue | Observed | Consequence |
 |---|---|---|
-| **Stale positions** | `time_position` can lag `last_contact` | The dangerous one. Pairing a stale position with a current one fabricates a conflict and injects false positives into an already tiny positive class |
+| **Stale positions** | `time_position` can lag `last_contact`. Measured across the 58-minute window: **9.5% of airborne rows repeat a position already reported in an earlier frame** | The dangerous one. Pairing a stale position with a current one fabricates a conflict and injects false positives into an already tiny positive class. In frame sequences it also fakes a stationary aircraft, so trajectory work must de-duplicate on `(icao24, time_position)` rather than trusting one row per frame |
 | Null altitudes | 41 of 302 in the sample, all ground traffic | Vertical separation undefined; naive code treats null as 0 ft separation |
 | Ground traffic | 41 of 302 airborne=False | Taxiing aircraft are not midair risks and pollute the negative class |
 | Mixed `position_source` | ADS-B and MLAT interleaved | MLAT positions are less precise; consider filtering |
@@ -172,7 +209,16 @@ produced. Cleaning belongs in a pipeline that writes to `data/processed/`.
 
 | Source | Needed for | Status |
 |---|---|---|
-| **OpenSky Trino historical archive** | All Phase 1 training data — Weeks 2 onward | Application pending. Requires separate approval; not granted on registration. **Critical path** |
+| **OpenSky Trino historical archive** | Multi-month sequences for TFT training — Weeks 6 onward | Application pending. Open to university-affiliated researchers; requires separate approval, not granted on registration. Apply under My OpenSky → Request Data Access, and query it through `pyopensky` or `traffic` rather than raw SQL. **Critical path** |
 
-The REST snapshots collected so far prove the pipeline works but cannot supply
-the multi-month trajectory sequences the models require.
+The one-hour backfill closed the immediate gap: trajectories, observed
+durations and repeated-encounter analysis all work on it, and scheduled polling
+adds coverage across times of day. What neither can supply is depth of history.
+Day-of-week and seasonal variation need weeks to months, and so does any
+sequence model trained on more than a single afternoon of Southern California
+traffic.
+
+Worth knowing before it costs a day: the OpenSky datasets published on Zenodo
+look like the answer and are not. They are **flight-level** — one row per
+flight, carrying only first-seen and last-seen positions — so they cannot
+produce simultaneous positions for a pair of aircraft.

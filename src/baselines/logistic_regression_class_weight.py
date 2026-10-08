@@ -7,58 +7,26 @@ from pathlib import Path
 
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
+from src.baselines.data import DEFAULT_PAIRS_PATH, load_dataset, split_dataset
 from src.evaluation.harness import build_evaluation_harness
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DATA_PATH = PROJECT_ROOT / "data" / "processed" / "states_socal_1787874146_pairs_labeled.csv"
+DEFAULT_DATA_PATH = DEFAULT_PAIRS_PATH
 DEFAULT_MODEL_PATH = PROJECT_ROOT / "models" / "week3_logistic_regression_class_weight.joblib"
-
-FEATURE_COLUMNS = [
-    "lateral_distance_nm",
-    "closing_speed_mps",
-    "bearing_difference_deg",
-    "vertical_separation_m",
-    "time_to_cpa_s",
-]
-
-
-# This function loads the same cleaned pair features used by the other Week 3
-# strategies so the class-weight comparison uses the same data and target.
-def load_dataset(data_path: Path) -> tuple[pd.DataFrame, pd.Series]:
-    df = pd.read_csv(data_path)
-    required_columns = [*FEATURE_COLUMNS, "collision_risk"]
-    missing = [column for column in required_columns if column not in df.columns]
-    if missing:
-        raise ValueError(f"Missing required columns for training: {missing}")
-
-    clean_df = df[required_columns].copy()
-    for column in FEATURE_COLUMNS:
-        clean_df[column] = pd.to_numeric(clean_df[column], errors="coerce")
-    clean_df = clean_df.replace([float("inf"), float("-inf")], float("nan")).dropna().copy()
-    X = clean_df[FEATURE_COLUMNS]
-    y = clean_df["collision_risk"].astype(int)
-    return X, y
-
 
 # This function trains logistic regression with balanced class weights. The
 # minority class receives more influence during fitting without changing the
-# held-out test set or the shared evaluation procedure.
+# evaluation rows or the shared evaluation procedure.
 def train_class_weight_model(
-    X: pd.DataFrame,
-    y: pd.Series,
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    X_eval: pd.DataFrame,
+    y_eval: pd.Series,
     random_state: int = 42,
-) -> tuple[Pipeline, dict, tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]]:
-    X_train, X_test, y_train, y_test = train_test_split(
-        X,
-        y,
-        test_size=0.2,
-        random_state=random_state,
-        stratify=y,
-    )
+) -> tuple[Pipeline, dict]:
 
     pipeline = Pipeline(
         steps=[
@@ -75,9 +43,9 @@ def train_class_weight_model(
     )
     pipeline.fit(X_train, y_train)
 
-    y_prob = pipeline.predict_proba(X_test)[:, 1]
-    metrics = build_evaluation_harness(y_test.to_numpy(), y_prob, threshold=0.5)
-    return pipeline, metrics, (X_train, X_test, y_train, y_test)
+    y_prob = pipeline.predict_proba(X_eval)[:, 1]
+    metrics = build_evaluation_harness(y_eval.to_numpy(), y_prob, threshold=0.5)
+    return pipeline, metrics
 
 
 # This function saves the trained classifier for the comparison and the
@@ -105,8 +73,9 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    X, y = load_dataset(args.data_path)
-    model, metrics, _ = train_class_weight_model(X, y)
+    X, y, times = load_dataset(args.data_path)
+    parts = split_dataset(X, y, times)
+    model, metrics = train_class_weight_model(*parts["train"], *parts["validation"])
     save_model(model, args.output_path)
 
     print(f"Dataset rows: {len(X)}")
