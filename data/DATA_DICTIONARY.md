@@ -135,6 +135,72 @@ gate whether a report is fresh enough to trust.
 Filtering decisions made against this list are **research decisions**, not
 plumbing — log each one to MLflow alongside the separation thresholds.
 
+### Phase 3, Step 1 — cleaned modeling sessions
+
+Run `python -m src.data.clean_states` to write cleaned copies of the five
+modeling sessions to `data/processed/cleaned_states/` and a per-session audit
+to `data/processed/state_cleaning_audit.csv`. The raw files are left unchanged.
+Cleaning retains airborne rows with a usable ICAO24, finite required
+position/kinematic fields, valid coordinate and track ranges, non-negative
+speed, and a position age from 0 to 15 seconds. Duplicate aircraft records
+within a snapshot are reduced to one row; repeated `(icao24, time_position)`
+reports in different snapshots are retained and flagged as
+`repeated_position_report`, since each snapshot is a distinct prediction time.
+Rows without either altitude source are retained for track continuity but
+cannot supply a vertical-separation label until altitude is available.
+
+### Phase 3, Step 3 — future-conflict labels
+
+Run `python -m src.labeling.future_conflicts` to label the cleaned sessions
+independently and write pair-feature rows to `data/processed/future_labels/`.
+The default draft target uses a 60-second horizon, the 5 NM / 1,000 ft
+proximity rule, and a 30-second maximum gap. At each prediction snapshot, only
+that snapshot's pair features are written as model inputs. Later snapshots
+determine `future_conflict` and `future_conflict_status`; they are not included
+as features. A pair already within both thresholds is marked
+`ongoing_excluded`; missing current vertical separation is
+`unknown_current_separation`. A positive requires a later threshold entry
+with at least one aircraft position report newer than its report at prediction
+time. A negative requires paired aircraft observations spanning the horizon,
+including an observation at or after its end, with no gap over 30 seconds.
+Incomplete follow-up is `unknown_incomplete_followup`, never negative. Status
+counts and the target parameters are written to `future_label_audit.csv`.
+
+### Phase 3, Step 5 — future-label dataset split
+
+Run `python -m src.evaluation.future_label_splits` to validate the saved
+frame-to-part assignment for every generated session and write a manifest.
+The split keeps whole sessions together: September 25 and the October 7 morning
+sessions are training, October 7 at 2:30 PM is validation, and October 7 at
+7:39 PM is test. This is a chronological later-session evaluation; aircraft
+pair identities can recur across sessions, but ICAO24s are not model features.
+`iter_labeled_split(split)` streams examples assigned to a split and excludes
+unknown or ongoing statuses. Large session CSVs are not copied into redundant
+train/validation/test files.
+
+### Phase 3, Step 6 — training-only preprocessing
+
+`fit_future_feature_scaler()` streams known training examples and fits a
+`StandardScaler` on the six predefined model features. Running
+`python -m src.evaluation.future_label_splits` saves it to
+`data/processed/future_labels/future_feature_scaler.joblib`. Use that scaler to
+transform validation and test features; do not fit or refit it on those splits.
+The feature list is fixed in `src/features/model_inputs.py`; no data-driven
+feature selection is currently applied.
+
+### Phase 3, Step 8 — saved outputs and reproduction
+
+Cleaned sessions and their audit are stored in `data/processed/`; future-label
+session CSVs, the label audit, split manifest, and fitted scaler are stored in
+`data/processed/future_labels/`. Recreate them in order with
+`python -m src.data.clean_states`,
+`python -m src.labeling.future_conflicts`, and
+`python -m src.evaluation.future_label_splits`. The scripts contain the default
+configuration and the audit CSVs record the cleaning and label parameters.
+Processed outputs are Git-ignored due to their size; preserve them separately
+if the exact generated results are needed, and retain the raw input sessions
+to reproduce them.
+
 ---
 
 ## 2. NTSB CAROL — aviation accident records

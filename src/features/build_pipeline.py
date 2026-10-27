@@ -15,20 +15,11 @@ from .kinematics import (
     time_to_cpa,
     vertical_separation,
 )
+from src.data.clean_states import clean_state_observations
 
 METRES_PER_NAUTICAL_MILE = 1_852.0
 DEFAULT_MAX_DISTANCE_NM = 50.0
 DEFAULT_MAX_POSITION_AGE_SECONDS = 15.0
-REQUIRED_COLUMNS = {
-    "icao24",
-    "latitude",
-    "longitude",
-    "on_ground",
-    "snapshot_time",
-    "time_position",
-    "velocity",
-    "true_track",
-}
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "processed"
@@ -51,7 +42,10 @@ def build_pair_features(
     if max_position_age_seconds < 0:
         raise ValueError("max_position_age_seconds must be greater than or equal to zero.")
 
-    usable_states = _filter_usable_states(states, max_position_age_seconds)
+    usable_states = clean_state_observations(
+        states,
+        max_position_age_seconds=max_position_age_seconds,
+    )
     maximum_distance_metres = max_distance_nm * METRES_PER_NAUTICAL_MILE
     if usable_states.empty:
         return pd.DataFrame(columns=_pair_feature_columns())
@@ -158,42 +152,6 @@ def _pairs_for_snapshot(
 
 
 # Week 2, step 6: remove aircraft without fresh, airborne kinematic data.
-def _filter_usable_states(
-    states: pd.DataFrame, max_position_age_seconds: float
-) -> pd.DataFrame:
-    missing_columns = REQUIRED_COLUMNS.difference(states.columns)
-    if missing_columns:
-        missing = ", ".join(sorted(missing_columns))
-        raise ValueError(f"State data is missing required columns: {missing}.")
-
-    prepared_states = states.copy()
-    numeric_columns = [
-        "latitude",
-        "longitude",
-        "snapshot_time",
-        "time_position",
-        "velocity",
-        "true_track",
-    ]
-    for column in numeric_columns:
-        prepared_states[column] = pd.to_numeric(prepared_states[column], errors="coerce")
-
-    prepared_states["position_age_s"] = (
-        prepared_states["snapshot_time"] - prepared_states["time_position"]
-    )
-    required_values = ["icao24", *numeric_columns]
-    usable_states = prepared_states.dropna(subset=required_values)
-    usable_states = usable_states.loc[
-        (~usable_states["on_ground"])
-        & (usable_states["position_age_s"] >= 0)
-        & (usable_states["position_age_s"] <= max_position_age_seconds)
-    ]
-    # Duplicate icao24 values are resolved per snapshot, not across the whole
-    # file: de-duplicating globally would keep one row per aircraft and discard
-    # every frame but its last.
-    return usable_states.reset_index(drop=True)
-
-
 # Week 2, steps 4 and 6: prefer barometric altitude and fall back to geo altitude.
 def _select_altitudes(snapshot_states: pd.DataFrame) -> np.ndarray:
     """Return one altitude per aircraft in metres, NaN where neither is reported."""
