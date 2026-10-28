@@ -10,7 +10,9 @@ from src.gnn import (
     GraphSAGEEdgeClassifier,
     pair_feature_names,
     pairs_to_graphs,
+    sparse_snapshot_to_graph,
 )
+from src.gnn.future_tuning import verify_candidate_pair_alignment
 from src.features.model_inputs import TIME_TO_CPA_CAP_SECONDS
 from src.gnn.data import NODE_FEATURES
 
@@ -131,6 +133,223 @@ class TestGraphSAGEEdgeClassifier(unittest.TestCase):
 
         self.assertIsNotNone(self.model.convs[0].lin_l.weight.grad)
         self.assertGreater(self.model.convs[0].lin_l.weight.grad.abs().sum().item(), 0)
+
+
+class TestSparseSnapshotToGraph(unittest.TestCase):
+    def test_graph_uses_sparse_candidate_edges_and_prediction_time_features(self):
+        snapshot = pd.DataFrame(
+            [
+                {
+                    "icao24": "abc123",
+                    "snapshot_time": 100,
+                    "time_position": 100,
+                    "latitude": 33.0,
+                    "longitude": -118.0,
+                    "velocity": 70.0,
+                    "true_track": 90.0,
+                    "on_ground": False,
+                    "baro_altitude": 1000.0,
+                    "geo_altitude": 1000.0,
+                },
+                {
+                    "icao24": "def456",
+                    "snapshot_time": 100,
+                    "time_position": 100,
+                    "latitude": 33.05,
+                    "longitude": -118.02,
+                    "velocity": 75.0,
+                    "true_track": 270.0,
+                    "on_ground": False,
+                    "baro_altitude": 1200.0,
+                    "geo_altitude": 1200.0,
+                },
+            ]
+        )
+
+        graph = sparse_snapshot_to_graph(snapshot)
+
+        self.assertEqual(graph.snapshot_time, 100)
+        self.assertEqual(tuple(graph.x.shape), (2, len(NODE_FEATURES)))
+        self.assertEqual(tuple(graph.edge_index.shape), (2, 2))
+        self.assertEqual(tuple(graph.edge_label_index.shape), (2, 1))
+        self.assertEqual(tuple(graph.pair_attr.shape), (1, len(pair_feature_names())))
+        self.assertTrue(torch.isfinite(graph.x).all())
+        self.assertTrue(torch.isfinite(graph.pair_attr).all())
+        self.assertEqual(graph.edge_label_index.tolist(), [[0], [1]])
+        self.assertEqual(
+            {tuple(edge) for edge in graph.edge_index.t().tolist()},
+            {(0, 1), (1, 0)},
+        )
+        self.assertFalse(hasattr(graph, "edge_label"))
+
+    def test_future_labels_align_with_classifier_probabilities(self):
+        snapshot = pd.DataFrame(
+            [
+                {
+                    "icao24": icao24,
+                    "snapshot_time": 100,
+                    "time_position": 100,
+                    "latitude": latitude,
+                    "longitude": -118.0,
+                    "velocity": 70.0,
+                    "true_track": track,
+                    "on_ground": False,
+                    "baro_altitude": altitude,
+                    "geo_altitude": altitude,
+                }
+                for icao24, latitude, track, altitude in (
+                    ("abc123", 33.0, 90.0, 1000.0),
+                    ("def456", 33.05, 270.0, 1200.0),
+                    ("fed123", 33.1, 180.0, 1400.0),
+                )
+            ]
+        )
+        labels = pd.DataFrame(
+            {
+                "snapshot_time": [100],
+                "icao24_a": ["abc123"],
+                "icao24_b": ["def456"],
+                "future_conflict": [1],
+                "future_conflict_status": ["positive"],
+            }
+        )
+        graph = sparse_snapshot_to_graph(snapshot, labels)
+        model = GraphSAGEEdgeClassifier(
+            node_features=len(NODE_FEATURES),
+            pair_features=len(pair_feature_names()),
+            hidden_channels=8,
+        )
+        model.eval()
+
+        with torch.no_grad():
+            probabilities = torch.sigmoid(model(graph))
+
+        self.assertEqual(graph.edge_label.tolist(), [1.0])
+        self.assertEqual(graph.edge_label_index.size(1), 1)
+        self.assertEqual(graph.edge_index.size(1), 6)
+        self.assertEqual(probabilities.shape, graph.edge_label.shape)
+        self.assertTrue(torch.all((probabilities >= 0) & (probabilities <= 1)))
+
+
+class TestCandidatePairAlignment(unittest.TestCase):
+    def test_pair_alignment_ignores_row_order_and_endpoint_order(self):
+        baseline = pd.DataFrame(
+            {
+                "snapshot_time": [100, 100],
+                "icao24_a": ["abc123", "def456"],
+                "icao24_b": ["def456", "fed123"],
+                "future_conflict": [1, 0],
+                "probability": [0.8, 0.1],
+            }
+        )
+        graphsage = pd.DataFrame(
+            {
+                "snapshot_time": [100, 100],
+                "icao24_a": ["fed123", "def456"],
+                "icao24_b": ["def456", "abc123"],
+                "future_conflict": [0, 1],
+                "probability": [0.2, 0.7],
+            }
+        )
+
+        verify_candidate_pair_alignment(graphsage, baseline)
+
+    def test_pair_alignment_rejects_missing_candidate(self):
+        baseline = pd.DataFrame(
+            {
+                "snapshot_time": [100],
+                "icao24_a": ["abc123"],
+                "icao24_b": ["def456"],
+                "future_conflict": [1],
+            }
+        )
+
+        with self.assertRaisesRegex(ValueError, "do not match"):
+            verify_candidate_pair_alignment(baseline.iloc[0:0], baseline)
+
+
+class TestGraphSAGEEmbeddings(unittest.TestCase):
+    def test_encode_returns_neighbor_contextualized_embedding_per_aircraft(self):
+        torch.manual_seed(0)
+        snapshot = pd.DataFrame(
+            [
+                {
+                    "icao24": icao24,
+                    "snapshot_time": 100,
+                    "time_position": 100,
+                    "latitude": latitude,
+                    "longitude": -118.0,
+                    "velocity": 70.0,
+                    "true_track": 90.0,
+                    "on_ground": False,
+                    "baro_altitude": altitude,
+                    "geo_altitude": altitude,
+                }
+                for icao24, latitude, altitude in (
+                    ("abc123", 33.0, 1000.0),
+                    ("def456", 33.05, 1200.0),
+                    ("fed123", 34.0, 1500.0),
+                )
+            ]
+        )
+        graph = sparse_snapshot_to_graph(snapshot)
+        model = GraphSAGEEdgeClassifier(
+            node_features=len(NODE_FEATURES),
+            pair_features=len(pair_feature_names()),
+            hidden_channels=8,
+        )
+        model.eval()
+
+        with torch.no_grad():
+            contextual = model.encode(graph.x, graph.edge_index)
+            without_edges = model.encode(graph.x, graph.edge_index.new_empty((2, 0)))
+
+        self.assertEqual(tuple(contextual.shape), (3, 8))
+        self.assertTrue(torch.isfinite(contextual).all())
+        self.assertFalse(torch.allclose(contextual, without_edges))
+
+
+class TestCandidatePairRepresentations(unittest.TestCase):
+    def test_pair_representation_combines_both_embeddings_and_pair_features(self):
+        graph = sparse_snapshot_to_graph(
+            pd.DataFrame(
+                [
+                    {
+                        "icao24": icao24,
+                        "snapshot_time": 100,
+                        "time_position": 100,
+                        "latitude": latitude,
+                        "longitude": -118.0,
+                        "velocity": 70.0,
+                        "true_track": 90.0,
+                        "on_ground": False,
+                        "baro_altitude": altitude,
+                        "geo_altitude": altitude,
+                    }
+                    for icao24, latitude, altitude in (
+                        ("abc123", 33.0, 1000.0),
+                        ("def456", 33.05, 1200.0),
+                    )
+                ]
+            )
+        )
+        hidden_channels = 8
+        model = GraphSAGEEdgeClassifier(
+            node_features=len(NODE_FEATURES),
+            pair_features=len(pair_feature_names()),
+            hidden_channels=hidden_channels,
+        )
+        model.eval()
+
+        with torch.no_grad():
+            representation = model.pair_representations(graph)
+
+        self.assertEqual(
+            tuple(representation.shape),
+            (graph.edge_label_index.size(1), 3 * hidden_channels + graph.pair_attr.size(1)),
+        )
+        self.assertTrue(torch.isfinite(representation).all())
+        self.assertTrue(torch.equal(representation[:, -graph.pair_attr.size(1):], graph.pair_attr))
 
 
 class TestFeatureScaler(unittest.TestCase):

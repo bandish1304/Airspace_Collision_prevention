@@ -1,6 +1,12 @@
 """GraphSAGE baseline for edge-level collision-risk classification."""
 
-from .data import FeatureScaler, load_pairs, pair_feature_names, pairs_to_graphs
+from .data import (
+    FeatureScaler,
+    load_pairs,
+    pair_feature_names,
+    pairs_to_graphs,
+    sparse_snapshot_to_graph,
+)
 from .model import GraphSAGEEdgeClassifier
 
 __all__ = [
@@ -9,4 +15,5 @@ __all__ = [
     "load_pairs",
     "pair_feature_names",
     "pairs_to_graphs",
+    "sparse_snapshot_to_graph",
 ]

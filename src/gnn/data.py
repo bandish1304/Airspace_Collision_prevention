@@ -27,7 +27,12 @@ from torch_geometric.data import Data
 
 # Labelling, the time-to-CPA treatment and row filtering all live in
 # model_inputs, shared with the baselines, so both models see the same rows.
-from src.features.model_inputs import feature_names, prepare_model_inputs
+from src.features.model_inputs import MODEL_FEATURES, feature_names, prepare_model_inputs
+from src.graph.sparse_graph import (
+    build_candidate_edges,
+    build_edge_features,
+    build_nodes,
+)
 
 NODE_FEATURES = [
     "latitude",
@@ -95,6 +100,100 @@ def pairs_to_graphs(
 # Week 5, step 1: name the pair features a graph will carry.
 def pair_feature_names(include_label_features: bool = True) -> list[str]:
     return feature_names(include_label_features)
+
+
+def sparse_snapshot_to_graph(
+    snapshot: pd.DataFrame, future_labels: pd.DataFrame | None = None
+) -> Data:
+    """Convert one snapshot to a sparse PyG graph, optionally with future labels."""
+    nodes = build_nodes(snapshot)
+    node_values = nodes[NODE_FEATURES].to_numpy(dtype=float)
+
+    # Aircraft without usable altitude cannot provide finite node or pair features.
+    usable = np.isfinite(node_values).all(axis=1)
+    nodes = nodes.loc[usable].reset_index(drop=True)
+    node_values = nodes[NODE_FEATURES].to_numpy(dtype=np.float32)
+
+    index_a, index_b = build_candidate_edges(nodes)
+    if len(index_a):
+        pair_features = build_edge_features(nodes, index_a, index_b)
+        finite_pairs = np.isfinite(pair_features[MODEL_FEATURES].to_numpy(dtype=float)).all(axis=1)
+        index_a, index_b = index_a[finite_pairs], index_b[finite_pairs]
+        pair_values = pair_features.loc[finite_pairs, MODEL_FEATURES].to_numpy(dtype=np.float32)
+    else:
+        pair_values = np.empty((0, len(MODEL_FEATURES)), dtype=np.float32)
+
+    message_a, message_b = index_a.copy(), index_b.copy()
+    edge_labels = None
+    if future_labels is not None:
+        required = {
+            "snapshot_time",
+            "icao24_a",
+            "icao24_b",
+            "future_conflict",
+            "future_conflict_status",
+        }
+        missing = required.difference(future_labels.columns)
+        if missing:
+            raise ValueError(f"Future labels are missing required columns: {sorted(missing)}.")
+        if future_labels["snapshot_time"].nunique() > 1 or (
+            not future_labels.empty
+            and int(future_labels["snapshot_time"].iloc[0]) != int(snapshot["snapshot_time"].iloc[0])
+        ):
+            raise ValueError("Future labels must belong to the snapshot being converted.")
+
+        known = future_labels.loc[
+            future_labels["future_conflict_status"].isin(["positive", "negative"])
+            & future_labels["future_conflict"].notna()
+        ]
+        label_by_pair: dict[tuple[str, str], float] = {}
+        for row in known.itertuples(index=False):
+            pair = tuple(sorted((str(row.icao24_a).lower(), str(row.icao24_b).lower())))
+            if pair in label_by_pair:
+                raise ValueError(f"Duplicate future label for candidate pair: {pair}.")
+            label_by_pair[pair] = float(row.future_conflict)
+
+        aircraft_ids = nodes["icao24"].to_numpy()
+        selected = [
+            i
+            for i, (a, b) in enumerate(zip(index_a, index_b))
+            if tuple(sorted((aircraft_ids[a], aircraft_ids[b]))) in label_by_pair
+        ]
+        selected_array = np.asarray(selected, dtype=int)
+        edge_labels = np.asarray(
+            [
+                label_by_pair[
+                    tuple(sorted((aircraft_ids[index_a[i]], aircraft_ids[index_b[i]])))
+                ]
+                for i in selected
+            ],
+            dtype=np.float32,
+        )
+        index_a, index_b = index_a[selected_array], index_b[selected_array]
+        pair_values = pair_values[selected_array]
+
+    edge_label_index = torch.tensor(
+        np.vstack([index_a, index_b]), dtype=torch.long
+    ).reshape(2, -1)
+    message_edge_index = torch.tensor(
+        np.vstack([message_a, message_b]), dtype=torch.long
+    ).reshape(2, -1)
+    aircraft_ids = nodes["icao24"].to_numpy()
+    pair_ids = [
+        (aircraft_ids[a], aircraft_ids[b]) for a, b in zip(index_a, index_b)
+    ]
+    graph = Data(
+        x=torch.tensor(node_values, dtype=torch.float),
+        edge_index=torch.cat([message_edge_index, message_edge_index.flip(0)], dim=1),
+        edge_label_index=edge_label_index,
+        pair_attr=torch.tensor(pair_values, dtype=torch.float),
+        pair_ids=pair_ids,
+        snapshot_time=int(snapshot["snapshot_time"].iloc[0]),
+        num_nodes=len(nodes),
+    )
+    if edge_labels is not None:
+        graph.edge_label = torch.tensor(edge_labels, dtype=torch.float)
+    return graph
 
 
 def _frame_to_graph(

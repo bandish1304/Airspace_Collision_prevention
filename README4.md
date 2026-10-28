@@ -463,3 +463,128 @@ Observations:
 - The fair question for GraphSAGE is therefore whether surrounding traffic adds information beyond those two features, not only whether it beats 0.439 average precision.
 - Remaining metrics from the professor's list (Recall@K, false positives per time window, lead time, inference-time and runtime scaling) belong to the later comparison phase, where GraphSAGE is scored on exactly these pairs.
 - The 60-second horizon, 5 NM / 1,000 ft thresholds, 15 NM radius and 5:1 cost are provisional project choices, still to be confirmed with the professor.
+
+## Phase 6, Step 1 — Provide GraphSAGE the Sparse Graph
+
+**Implementation:** `sparse_snapshot_to_graph` in [`src/gnn/data.py`](src/gnn/data.py) converts one prediction-time snapshot to the PyTorch Geometric `Data` object used by [`src/gnn/model.py`](src/gnn/model.py). It uses the Phase 4 15 NM BallTree candidate edges, the six current-state node features (latitude, longitude, altitude, speed, and heading sin/cos), and the six current pair features. Each undirected candidate pair is stored once in `edge_label_index` for scoring and in both directions in `edge_index` for GraphSAGE message passing. No label or future data is included.
+
+Aircraft without a finite node feature (for example, no reported altitude) and candidate pairs without finite pair features are omitted, matching the usable-feature requirement of the logistic-regression comparison. The function provides the graph inputs only; future-conflict labels are added separately for training in a later step.
+
+Simple words: In Step 1, I connected the graph we already built to GraphSAGE. GraphSAGE now receives each plane's current position, altitude, speed and heading, plus links to nearby planes and facts about each linked pair. The links are sparse, so far-away pairs are not included.
+
+Observations:
+- GraphSAGE receives one graph per snapshot, with every candidate link available in both directions for information sharing.
+- Pair labels are deliberately absent at this step, so future outcomes cannot leak into the model inputs.
+- A focused test checks the node features, candidate-pair indices, two-way message-passing edges and pair-feature dimensions. Run `python -m unittest tests.test_gnn` when the PyTorch and PyTorch Geometric dependencies are installed.
+
+## Phase 6, Step 2 — Contextualized Aircraft Embeddings
+
+The existing `GraphSAGEEdgeClassifier.encode` method in [`src/gnn/model.py`](src/gnn/model.py) passes each node's features through its GraphSAGE convolution layers, using the sparse graph's `edge_index`. Each layer combines an aircraft's current representation with aggregated representations from its direct neighbors; stacking layers lets information travel farther through the graph. The output is one contextualized embedding per aircraft. This step uses the graph from `sparse_snapshot_to_graph` and adds no new model component.
+
+Simple words: GraphSAGE starts with what is known about each plane. It then lets each plane gather information from the nearby planes connected to it. The result is a richer summary for each plane that includes some of its neighbors' situation.
+
+Observations:
+- The model already had the GraphSAGE encoder, so Step 2 reuses it rather than adding duplicate code.
+- A focused test checks that encoding returns one finite embedding per node and that using neighbor edges changes the embeddings compared with encoding without edges. Run `python -m unittest tests.test_gnn` when PyTorch and PyTorch Geometric are available.
+
+## Phase 6, Step 3 — Candidate-Pair Representations
+
+The existing `pair_representations` method in [`src/gnn/model.py`](src/gnn/model.py) creates one representation for each candidate pair in `edge_label_index`. It combines the two aircraft embeddings symmetrically—sum, absolute difference, and elementwise product—then appends the six current pair features from `pair_attr` (distance, vertical separation, closing speed, bearing difference, log time to closest approach, and its availability flag). Thus swapping the aircraft order does not change the pair representation, and every candidate edge has one representation.
+
+Simple words: GraphSAGE first makes a neighbor-aware summary for each plane. For every candidate pair, the model puts the two summaries together, adds the facts about their current separation and movement, and makes one combined description of that pair.
+
+Observations:
+- This pair-combination code already existed in the GraphSAGE model, so I reused it without adding another implementation.
+- A focused test checks that there is one representation per candidate pair, that its size includes both endpoint summaries and pair features, and that the pair features are included unchanged. Run `python -m unittest tests.test_gnn` when PyTorch and PyTorch Geometric are available.
+
+## Phase 6, Step 4 — Future-Conflict Edge Classification
+
+The existing `GraphSAGEEdgeClassifier` in [`src/gnn/model.py`](src/gnn/model.py) turns each candidate pair representation into one logit. `sparse_snapshot_to_graph(snapshot, future_labels)` in [`src/gnn/data.py`](src/gnn/data.py) now aligns known `future_conflict` labels with candidate pairs for that snapshot. The full sparse candidate graph remains available for message passing; only pairs with known positive/negative labels are included in `edge_label_index`, `pair_attr`, and `edge_label` for supervised classification. Unknown or unlabeled candidate edges can still provide graph context but are not used as training targets. Sigmoid converts classifier logits to probabilities; training and the probability evaluation pipeline come in subsequent steps.
+
+Simple words: In Step 4, GraphSAGE gets one answer for each labeled nearby pair: how likely the pair is to enter a conflict within the next 60 seconds. It can still learn context from nearby aircraft whose future answer is unknown, but it does not train on those unknown answers.
+
+Observations:
+- Labels are matched to candidate edges by the two aircraft identifiers, regardless of pair order, and must belong to the same snapshot.
+- The classifier returns one logit per labeled candidate pair; applying sigmoid gives a probability from 0 to 1.
+- A focused test checks label alignment and probability output. Run `python -m unittest tests.test_gnn` when PyTorch and PyTorch Geometric are available.
+
+## Phase 6, Step 5 — Tune Model Settings on Validation Only
+
+The small tuning runner is [`src/gnn/future_tuning.py`](src/gnn/future_tuning.py). Run `python -m src.gnn.future_tuning`. It trains each configuration on the training sessions and selects the best by **validation average precision**. It does not load or inspect the test split. Scaling statistics are fitted on training graphs only. The saved tuning history and selected configuration go to `data/processed/graphsage_tuning/` (Git-ignored).
+
+| Hidden channels | Learning rate | Best epoch (out of 5) | Validation average precision |
+|---:|---:|---:|---:|
+| 32 | 0.0010 | 5 | 0.2356 |
+| 32 | 0.0005 | 4 | 0.2160 |
+| **64** | **0.0010** | **5** | **0.2550** |
+| 64 | 0.0005 | 5 | 0.2453 |
+
+**Selected settings for Step 6:** 64 hidden channels, learning rate 0.001, 2 GraphSAGE layers, dropout 0.2, mean aggregation, and 5 epochs. The final settings were selected only by validation average precision (0.2550). The selection run used weighted binary cross-entropy to account for the rare positive labels; that training procedure was held constant across configurations.
+
+**Fairness check:** the tuner built 657 training graphs with 828,423 labeled candidate pairs (15,433 positive) and 167 validation graphs with 186,418 labeled candidate pairs (3,195 positive). These exactly match the eligible pair counts used by the Phase 5 logistic-regression baseline. Test data was not used for tuning.
+
+Simple words: In Step 5, I tried four small model settings, changing the embedding size and learning speed. I compared them using only the validation sessions and kept the one that ranked future conflicts best. The test session stayed untouched.
+
+Observations:
+- 64 hidden channels and a 0.001 learning rate gave the best validation average precision of the four tried settings.
+- The result is a tuning choice, not a test result. Step 6 retrains using the selected settings, saves the model and only then generates test predictions.
+- The grid is intentionally small to keep tuning practical; it does not claim to find the globally best GraphSAGE configuration.
+
+## Phase 6, Step 6 — Save the Best Model, Configuration and Test Predictions
+
+Run `python -m src.gnn.future_tuning --finalize` after Step 5's tuning command. It loads the validation-selected configuration, fits feature scaling on training graphs only, trains on training data, and keeps the epoch with the best validation average precision. The test split is scored only after model selection.
+
+| Saved item | Location |
+|---|---|
+| Trained model weights, configuration, selected epoch, validation score and training-only scaler statistics | `models/future_graphsage.pt` |
+| Readable model configuration and pair counts | `data/processed/graphsage_tuning/best_config.json` |
+| One future-conflict probability per test pair, with snapshot time, aircraft IDs and target | `data/processed/graphsage_tuning/test_predictions.csv` |
+
+The final model used 64 hidden channels, learning rate 0.001, 2 layers, dropout 0.2, mean aggregation, and the best validation epoch (5). Best validation AP in the latest final training run was 0.2577. The test output contains 105,856 probabilities for 1,577 positive pairs; all probabilities are finite and between 0 and 1, with no duplicate pair rows.
+
+**Same-pair check:** the GraphSAGE test predictions have exactly the same 105,856 `(snapshot_time, icao24_a, icao24_b)` rows and labels as the Phase 5 six-feature logistic-regression test predictions: no missing or extra pairs. This also verifies Step 7's candidate-pair comparison requirement.
+
+Simple words: In Step 6, I saved the trained GraphSAGE model, wrote down its settings, and made a probability for every test pair. I checked that it scored exactly the same pairs as the main logistic-regression baseline, so the comparison is fair.
+
+Observations:
+- Model selection used validation data only. Test labels were not used to select the settings or best epoch; they are included beside probabilities only for later evaluation.
+- The model and generated predictions are Git-ignored. Rerun the tuning command followed by `python -m src.gnn.future_tuning --finalize` to regenerate them.
+- The selected model achieved a final-run validation AP of 0.2577, while the tuning-grid run reported 0.2550 for the same settings. Each figure comes from a separate training run; neither number uses test data.
+
+## Phase 6, Step 7 — Confirm Candidate-Pair Alignment
+
+The finalization command now checks [`data/processed/graphsage_tuning/test_predictions.csv`](data/processed/graphsage_tuning/test_predictions.csv) against the Phase 5 six-feature baseline's [`logreg_test_predictions.csv`](data/processed/future_predictions/logreg_test_predictions.csv). It compares the full test candidate-pair identifiers (`snapshot_time`, the two aircraft IDs, treated as an unordered pair) and the `future_conflict` labels, and raises an error if either prediction file has duplicates or if any pair or label differs.
+
+The check passed: both models score exactly **105,856 test candidate pairs**, with identical IDs and labels (1,577 positive pairs). There are no missing pairs, extra pairs or duplicate rows. Run `python -m src.gnn.future_tuning --finalize` to regenerate GraphSAGE predictions and repeat the check. It requires the Phase 5 baseline test-predictions file to exist first.
+
+Simple words: In Step 7, I checked that GraphSAGE and logistic regression took the same test. Both scored the same aircraft pairs at the same times and used the same answers. That makes their comparison fair.
+
+Observations:
+- The check ignores pair order (A–B and B–A are treated as the same pair), but it does check the snapshot time and label.
+- Pair alignment is now checked automatically every time the finalization command runs, not just by a one-time manual comparison.
+
+## Phase 6 Deliverable — Reproducible GraphSAGE Future-Conflict Pipeline
+
+**Reproduce the pipeline:**
+
+1. Run `python -m src.gnn.future_tuning` to compare the four documented settings using training data for fitting and validation average precision for selection only. This saves the tuning table and selected settings under `data/processed/graphsage_tuning/`.
+2. Ensure the Phase 5 baseline test predictions exist at `data/processed/future_predictions/logreg_test_predictions.csv`.
+3. Run `python -m src.gnn.future_tuning --finalize` to fit the selected model, select its best epoch with validation data, save the model and configuration, produce test probabilities, and verify that the GraphSAGE predictions contain exactly the same candidate pairs and labels as the logistic-regression comparison.
+
+**Pipeline files:** [`src/gnn/future_tuning.py`](src/gnn/future_tuning.py) loads the split data, trains and tunes GraphSAGE, and writes predictions. [`src/gnn/data.py`](src/gnn/data.py) builds sparse PyTorch Geometric snapshot graphs and aligns future labels to candidate edges. [`src/gnn/model.py`](src/gnn/model.py) creates contextualized aircraft embeddings and edge-classifier scores.
+
+| Deliverable item | Saved location |
+|---|---|
+| Tuning results and selected configuration | `data/processed/graphsage_tuning/tuning_results.csv`, `best_config.json` |
+| Trained model weights, model settings and training-only scaler values | `models/future_graphsage.pt` |
+| Test future-conflict probabilities, labels, snapshot times and aircraft pair IDs | `data/processed/graphsage_tuning/test_predictions.csv` |
+| Candidate-pair alignment check | Runs during finalization against `data/processed/future_predictions/logreg_test_predictions.csv` |
+
+The current test prediction file contains **105,856 candidate pairs**, including **1,577 positive future-conflict labels**, and one finite probability between 0 and 1 for every pair. The pair IDs and labels match the logistic-regression test set exactly. Model and generated outputs are Git-ignored and can be regenerated with the commands above.
+
+Simple words: The GraphSAGE pipeline can be run again from the saved project data. It first chooses settings using validation data, then trains and saves the selected model, and finally gives a future-conflict probability to every test candidate pair. It checks that logistic regression got the same test pairs.
+
+Observations:
+- The test set is used only after settings and the best training epoch have been selected with validation data.
+- The final probability file contains aircraft IDs and snapshot times, so every score can be traced to its candidate pair.
+- The same-pair check makes the GraphSAGE and logistic-regression comparison reproducible and fair.
