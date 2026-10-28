@@ -287,3 +287,179 @@ Simple words: The graph now keeps about 1 in 20 possible pairs, builds without c
 Observations:
 - Sparse and complete enough: the graph is about 20 times smaller than all pairs while losing under 0.1% of conflict rows.
 - The 15 NM radius, 60-second horizon and the label thresholds are provisional until the professor confirms them. Rerun `python -m src.graph.sparse_graph` and `python -m src.graph.candidate_recall` if they change.
+
+## Phase 5, Step 1 — Logistic Regression Trained on the Future-Conflict Label
+
+**What changed:** the baseline is still plain logistic regression (scikit-learn `StandardScaler` followed by `LogisticRegression(max_iter=5000, random_state=42)`, no class weighting or SMOTE), but its target is now `future_conflict` from Phase 3 instead of the current-proximity label. Code: [`src/baselines/future_logistic_regression.py`](src/baselines/future_logistic_regression.py); run `python -m src.baselines.future_logistic_regression`. The model is saved to `models/future_logistic_regression.joblib` (Git-ignored).
+
+**Training data:** known-label pairs from the training sessions only, kept only if they are Phase 4 candidate edges (lateral distance of at most 15 NM). That gives 828,423 pairs, of which 15,433 are positive (1.86%). The 17 training positives outside 15 NM are not available to either model. The scaler is fitted inside the pipeline on these training rows only.
+
+Simple words: In Step 1, I kept the simple model but changed what it learns. It now learns to predict whether two planes will get too close in the next 60 seconds, not whether they are too close right now. It only studies the training sessions, and only pairs that would be connected in the graph.
+
+Observations:
+- The training set is small compared with the 5.7 million rows in the Phase 3 training split, because the 15 NM rule keeps only the nearby pairs, and the positive rate rises to 1.86%.
+- No test or validation data was used. Predictions, thresholds and evaluation come in the next steps.
+
+## Phase 5, Step 2 — Prediction-Time Information Only
+
+**Check:** the trained model's input columns were read back from the saved file, and they are exactly the six pair features in `MODEL_FEATURES`: `lateral_distance_nm`, `vertical_separation_m`, `closing_speed_mps`, `bearing_difference_deg`, `log_time_to_cpa`, `has_cpa`. All six are computed from the two aircraft's reported state at the prediction snapshot, with the same formulas as the GraphSAGE edge features (Phase 4, Step 4). The label (`future_conflict`), its status, and the snapshot and aircraft identifiers are separated out by `prepare_future_model_inputs` and are never inputs. An existing test, `test_future_targets_and_status_are_not_model_features` in `tests/test_future_conflicts.py`, enforces this, and the scaler is fitted on training rows only.
+
+Simple words: In Step 2, I checked that the simple model only sees what is known right now: how far apart two planes are, their height difference, how fast they are closing, their heading difference, and the estimated closest-approach time. It never sees the answer or anything from the next 60 seconds.
+
+Observations:
+- The model's six input columns match the expected list exactly, so no label or future column slipped in.
+- Distance and vertical separation define the label's thresholds, so this baseline can partly rebuild the labelling rule. The professor's email raised this concern. Dropping them is an open option for the comparison.
+- No new code was needed for this step, only the check and this record.
+
+## Phase 5, Step 3 — Same Pairs, Splits and Target as GraphSAGE
+
+**One shared definition:** `load_split(split)` in [`src/baselines/future_logistic_regression.py`](src/baselines/future_logistic_regression.py) defines the evaluation set, and GraphSAGE must score exactly these pairs. A pair is **eligible** when (1) its future-conflict label is known (`positive` or `negative`; ongoing and unknown-follow-up pairs are excluded as in Phase 3), (2) it is a Phase 4 candidate edge (lateral distance of at most 15 NM), and (3) its six features are finite. The target is `future_conflict` (60-second horizon), and the splits are the Phase 3 chronological session splits.
+
+| Split | Sessions | Eligible pairs | Positive | Positive rate |
+|---|---|---|---|---|
+| Train | backfill, 06:39 AM, 10:18 AM | 828,423 | 15,433 | 1.86% |
+| Validation | 02:30 PM | 186,418 | 3,195 | 1.71% |
+| Test | 07:39 PM | 105,856 | 1,577 | 1.49% |
+
+**Consistency check:** the positive counts (15,433, 3,195, 1,577) equal the "rows in candidates" counts from the Phase 4 recall measurement, which used the BallTree edges. So the distance filter used here selects the same positives as the graph's candidate edges.
+
+Simple words: In Step 3, I fixed the exam for both models. They are trained, tuned and tested on the same sessions, the same pairs (only those connected in the graph), and the same question (will this pair get too close in 60 seconds?). That way any difference in score comes from the model, not from different data.
+
+Observations:
+- The test session has the lowest conflict rate (1.49%), so the test task is slightly harder than training in terms of class balance, and test scores should be read with that in mind.
+- The 19 conflict rows that fall outside 15 NM are not eligible for either model. Both models share that limit.
+- GraphSAGE should not use `load_split` for its own features, only to decide which pairs to score and with which labels.
+
+## Phase 5, Step 4 — Probability for Each Candidate Pair
+
+**What is produced:** `save_predictions` in [`src/baselines/future_logistic_regression.py`](src/baselines/future_logistic_regression.py) scores every eligible pair of the validation and test splits (the Step 3 set) with `predict_proba` and writes one row per pair: `snapshot_time`, `icao24_a`, `icao24_b`, the true `future_conflict` label, and `probability` (the predicted chance of entering a proximity conflict within 60 seconds). Run `python -m src.baselines.future_logistic_regression`; files are saved to `data/processed/future_predictions/logreg_validation_predictions.csv` and `logreg_test_predictions.csv` (Git-ignored, regenerated by the command). The model was fitted on training data only.
+
+| Split | Pairs scored | Probabilities in 0–1 | Missing | Duplicate pairs | Mean probability | Actual positive rate |
+|---|---|---|---|---|---|---|
+| Validation | 186,418 | yes | 0 | 0 | 0.0171 | 1.71% |
+| Test | 105,856 | yes | 0 | 0 | 0.0151 | 1.49% |
+
+Simple words: In Step 4, the model gave every nearby pair of planes a score between 0 and 1: its estimate of how likely the pair is to get too close within 60 seconds. These scores are saved so they can be ranked, thresholded and compared with GraphSAGE.
+
+Observations:
+- Every eligible pair got exactly one probability, with no gaps or duplicates.
+- The average predicted probability is almost the same as the real conflict rate (1.71% versus 1.71%, and 1.51% versus 1.49%), so the model's scores are well calibrated on average.
+- The probabilities are not yet turned into yes/no decisions. The threshold is chosen from validation data in Step 5, and results are measured afterwards.
+
+## Phase 5, Step 5 — Threshold Chosen on Validation Data Only
+
+**Method:** the threshold is picked by `fit_threshold` in [`src/evaluation/threshold.py`](src/evaluation/threshold.py), the project's existing rule (a missed conflict costs 5 times a false alarm), moved out of `src/gnn/train.py` into a module that does not need PyTorch, so GraphSAGE and the baseline use the same code. It reads only the validation predictions (`logreg_validation_predictions.csv`) and never sees the test set. The chosen value is saved with `"chosen_on": "validation"` in `data/processed/future_predictions/logreg_threshold.json` by `python -m src.baselines.future_logistic_regression`.
+
+**Chosen threshold: 0.1557.** A pair is flagged as a likely conflict when its probability is at least this value. As a sanity check, the same fixed threshold gives:
+
+| Split | Pairs flagged | True conflicts caught | False alarms | Missed | Precision | Recall |
+|---|---|---|---|---|---|---|
+| Validation (used to choose it) | 6,018 | 2,288 | 3,730 | 907 | 0.380 | 0.716 |
+| Test (applied, not tuned) | 2,860 | 1,096 | 1,764 | 481 | 0.383 | 0.695 |
+
+Simple words: In Step 5, I decided how high a score must be before the model raises an alarm: 0.1557. I picked that number using only the validation session. The test session was kept hidden until I applied that fixed number. Missing a real conflict is treated as five times worse than a false alarm, so the number is low enough to catch most conflicts.
+
+Observations:
+- Validation and test behave almost the same (precision 0.380 versus 0.383, recall 0.716 versus 0.695), which suggests the threshold is not overfitted to the validation session.
+- Roughly 2 of every 3 alarms are false, which is the cost of catching about 70% of conflicts. The full metric set (F1, average precision, Recall@K, false positives per time window) comes in the later evaluation phase.
+- The 5:1 cost is a project choice carried over from the earlier phases, not a value from the professor, so it is worth confirming.
+
+## Phase 5, Step 6 — Recorded Features, Preprocessing, Settings and Prediction Time
+
+**Where:** `write_run_record` in [`src/baselines/future_logistic_regression.py`](src/baselines/future_logistic_regression.py) saves everything to `data/processed/future_predictions/logreg_run_record.json` each time `python -m src.baselines.future_logistic_regression` runs (Git-ignored; regenerated by the command). The trained model is `models/future_logistic_regression.joblib`.
+
+| Item | Recorded value |
+|---|---|
+| Features (6) | `lateral_distance_nm`, `vertical_separation_m`, `closing_speed_mps`, `bearing_difference_deg`, `log_time_to_cpa`, `has_cpa` |
+| Feature prep | Time to closest approach capped at 3,600 s, then log(1 + t); `has_cpa` = 1 if a closest approach exists |
+| Scaling | `StandardScaler` fitted on the 828,423 training pairs only; the mean and scale of every feature are stored in the record |
+| Eligible pairs | Known label (positive or negative) and lateral distance of at most 15 NM |
+| Model | scikit-learn `LogisticRegression`: L2 penalty (default), C = 1.0, solver lbfgs, max_iter = 5000, random_state = 42, no class weights, no SMOTE |
+| Threshold | 0.1557, chosen on validation only (5:1 miss-to-false-alarm cost) |
+| Prediction time | Features are taken from the snapshot at time *t* (current state only) and the model predicts conflict onset within 60 s after *t* |
+| Scoring time | Scoring the test set (105,856 pairs in 166 snapshots) took 0.014 s, about 0.08 ms per snapshot (model scoring only, after the pairs were loaded) |
+
+Simple words: In Step 6, I wrote down everything needed to rebuild this model and get the same results: which six facts it uses, how they are prepared and scaled, the model settings, the alarm threshold, and the moment it predicts from (now, looking 60 seconds ahead). I also timed how fast it scores, for the speed comparison later.
+
+Observations:
+- Learned weights (on scaled features): vertical separation −14.6 and lateral distance −3.0 are by far the largest. So the baseline relies mostly on current distance and height gap, which are exactly the label's thresholds. This supports the professor's concern and the plan to run a version without them last.
+- The scoring time covers only the model step. The professor's inference-time comparison should also include building the pair features, since the sparse graph removes most of that work. That belongs in the later runtime phase.
+- Re-running the command reproduces the same model, because the data, splits and `random_state` are fixed.
+
+## Phase 5, Step 6b — Second Version Without Distance and Vertical Separation
+
+**What it is:** the same logistic regression, data, splits, scaler, and validation-only threshold rule, but with `lateral_distance_nm` and `vertical_separation_m` removed. Those two define the label thresholds (5 NM, 1,000 ft), so the main baseline can partly rebuild the rule from them. The variant keeps only `closing_speed_mps`, `bearing_difference_deg`, `log_time_to_cpa` and `has_cpa`. It comes from `feature_names(include_label_features=False)`; both versions are produced by `python -m src.baselines.future_logistic_regression` (variant files end in `_no_distance`, for example `logreg_no_distance_run_record.json`).
+
+**Test results** (each at its own threshold chosen on validation only; 105,856 pairs, 1,577 positive, 1.49% positive rate):
+
+| Model | Features | Threshold | Flagged | Precision | Recall | F1 | Average precision |
+|---|---|---|---|---|---|---|---|
+| Main baseline | 6 | 0.1557 | 2,860 | 0.383 | 0.695 | 0.494 | 0.439 |
+| Without distance and vertical separation | 4 | 0.0417 | 0 | 0.000 | 0.000 | 0.000 | 0.026 |
+
+Validation average precision: 0.476 (main) and 0.034 (variant). A model that guesses at random would score about 0.015 (the positive rate).
+
+Simple words: I took away the two facts that define the label (how close, and how far apart in height) and asked the same simple model to try again. Without them it can barely tell dangerous pairs from safe ones. It scores only a little better than guessing, and at the chosen alarm level it raises almost no alarms.
+
+Observations:
+- The main baseline's skill comes almost entirely from current distance and vertical separation. Closing speed, heading difference and closest-approach time alone carry very little signal in this model.
+- This is why the professor's concern matters: a strong baseline here is mostly the labelling rule, so the fairer test of GraphSAGE is whether surrounding traffic adds information beyond those two features.
+- The four-feature variant is a weak reference, not a competitor. If GraphSAGE is also run without the two features, the comparison of interest is GraphSAGE against this near-chance baseline.
+- The variant's threshold (0.0417) flags almost nothing because no probability level separates conflicts well under the 5:1 cost rule, so look at average precision for it.
+
+## Phase 5 Deliverable — Reproducible Logistic Regression Baseline
+
+**Reproduce:** `python -m src.baselines.future_logistic_regression` trains both versions on the training sessions, scores validation and test, picks each threshold on validation only, and writes everything below. Code: [`src/baselines/future_logistic_regression.py`](src/baselines/future_logistic_regression.py) and [`src/evaluation/threshold.py`](src/evaluation/threshold.py). All outputs are under `data/processed/future_predictions/` and `models/` (Git-ignored, regenerated by the command).
+
+| Deliverable item | Where |
+|---|---|
+| Test predictions (one probability per eligible pair) | `logreg_test_predictions.csv` (main), `logreg_no_distance_test_predictions.csv` |
+| Evaluation results | `test_results` and `validation_results` in `logreg_run_record.json` and `logreg_no_distance_run_record.json`, summarized in Step 6b |
+| Feature list, preprocessing, settings, prediction time | `logreg_run_record.json` (Step 6) |
+| Threshold (validation only) | `logreg_threshold.json` |
+
+Headline test result (main baseline, six features): precision 0.383, recall 0.695, F1 0.494, average precision 0.439 on 105,856 eligible pairs. Remaining metrics from the professor's list (Recall@K, false positives per time window, lead time, runtime scaling) are for the later comparison phase, where GraphSAGE is scored on exactly these pairs.
+
+## Phase 5 Deliverable — Full Report (Separate Write-Up)
+
+**Decision:** the **main baseline is the six-feature logistic regression**, which keeps lateral distance and vertical separation. GraphSAGE receives the same six edge features, so the comparison is fair. The four-feature version (without those two) is a secondary reference that shows how much the baseline depends on them.
+
+**Reproduce:** run `python -m src.baselines.future_logistic_regression` from the project root, after the Phase 3 labels exist. It trains both versions on the training sessions only, scores the validation and test sessions, picks each threshold on validation only, and writes all outputs. Code: [`src/baselines/future_logistic_regression.py`](src/baselines/future_logistic_regression.py) and [`src/evaluation/threshold.py`](src/evaluation/threshold.py). The data, splits and `random_state` (42) are fixed, so re-running gives the same model and predictions. Outputs are under `data/processed/future_predictions/` and `models/` (Git-ignored, regenerated by the command).
+
+**Setup (main baseline)**
+
+| Item | Value |
+|---|---|
+| Target | `future_conflict`: enters 5 NM and 1,000 ft within 60 s after prediction time (provisional definition) |
+| Features (6) | `lateral_distance_nm`, `vertical_separation_m`, `closing_speed_mps`, `bearing_difference_deg`, `log_time_to_cpa`, `has_cpa`, all from the snapshot at prediction time |
+| Eligible pairs | Known label and lateral distance of at most 15 NM (the Phase 4 candidate edges), the same pairs GraphSAGE is scored on |
+| Splits | Train: backfill, 06:39 AM, 10:18 AM sessions. Validation: 02:30 PM. Test: 07:39 PM |
+| Model | `StandardScaler` (fitted on training pairs only) then `LogisticRegression` (C = 1.0, lbfgs, max_iter = 5000, random_state = 42, no class weights, no SMOTE) |
+| Threshold | 0.1557, chosen on validation only (a missed conflict costs 5 times a false alarm) |
+
+**Test results** (test session: 105,856 eligible pairs, 1,577 positive, 1.49% positive rate; each model uses its own validation-chosen threshold)
+
+| Model | Pairs flagged | Precision | Recall | F1 | Average precision |
+|---|---|---|---|---|---|
+| **Main baseline (6 features)** | 2,860 | **0.383** | **0.695** | **0.494** | **0.439** |
+| Reference (4 features, no distance) | 0 | 0.000 | 0.000 | 0.000 | 0.026 |
+
+For reference, random guessing gives an average precision of about 0.015. On the validation session the main baseline scored precision 0.380, recall 0.716, F1 0.497 and average precision 0.476, close to its test result.
+
+**Files**
+
+| Item | Where |
+|---|---|
+| Test predictions (one probability per eligible pair) | `data/processed/future_predictions/logreg_test_predictions.csv` (main), `logreg_no_distance_test_predictions.csv` |
+| Validation predictions | `logreg_validation_predictions.csv`, `logreg_no_distance_validation_predictions.csv` |
+| Evaluation results, feature list, preprocessing, settings, prediction time | `logreg_run_record.json` (main), `logreg_no_distance_run_record.json` |
+| Threshold | `logreg_threshold.json`, `logreg_no_distance_threshold.json` |
+| Trained models | `models/future_logistic_regression.joblib`, `models/future_logistic_regression_no_distance.joblib` |
+
+Simple words: I retrained the simple model to predict whether two planes will get too close in the next 60 seconds. It is tested fairly, on the same pairs and sessions that GraphSAGE will use. On the test session it catches about 70% of the future conflicts, and about 38% of its alarms are real. Everything needed to rebuild it is saved, and one command reproduces it.
+
+Observations:
+- The baseline's skill comes almost entirely from current distance and vertical separation. Without them the model is close to guessing. This matches the professor's point that logistic regression can largely rebuild the labelling rule.
+- The fair question for GraphSAGE is therefore whether surrounding traffic adds information beyond those two features, not only whether it beats 0.439 average precision.
+- Remaining metrics from the professor's list (Recall@K, false positives per time window, lead time, inference-time and runtime scaling) belong to the later comparison phase, where GraphSAGE is scored on exactly these pairs.
+- The 60-second horizon, 5 NM / 1,000 ft thresholds, 15 NM radius and 5:1 cost are provisional project choices, still to be confirmed with the professor.
