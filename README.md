@@ -210,6 +210,22 @@ On this one held-out session, latent SMOTE did not improve GraphSAGE's average p
 
 The SMOTE model, metrics, training history, and test predictions are saved as `models/week5_graphsage_smote.pt`, `experiments/eda/step11_graphsage_smote_metrics.csv`, `experiments/eda/step11_graphsage_smote_training.csv`, and `experiments/eda/step11_graphsage_smote_test_predictions.csv`.
 
+**Week 7 — Initial TFT input pipeline and training smoke test.** Pairwise trajectory windows were built from five collected Southern California ADS-B sessions. Each example uses 30 consecutive observations of one aircraft pair as its encoder sequence and predicts whether that pair meets the current collision-risk rule at least once within the next six observations. Windows do not cross aircraft-pair changes, observation gaps longer than 30 seconds, collection sessions, or temporal split boundaries. The binary target follows the existing rule-based label; it does not represent a confirmed collision.
+
+The existing chronological session assignment was reused: three sessions for training, one later session for validation, and the latest session for the held-out test split. The resulting datasets contain:
+
+| Split | Sessions | Windows | Future-risk positives | Positive rate |
+|---|---:|---:|---:|---:|
+| Train, before SMOTE | 3 | 2,308,133 | 23,406 | 1.014% |
+| Validation, unchanged | 1 | 403,376 | 4,513 | 1.119% |
+| Test, unchanged | 1 | 234,282 | 2,442 | 1.042% |
+
+SMOTE was applied to the training split only. To bound memory, the implementation sampled up to ten negative windows per positive and targeted a 0.5 positive-to-negative ratio. This produced a training pool of 351,090 windows: 117,030 positive (including 93,624 synthetic windows) and 234,060 negative. Validation and test were not resampled.
+
+A one-epoch CPU smoke test checked that the real-data windows, training-only SMOTE, PyTorch Forecasting `TimeSeriesDataSet`, binary TFT output, and training loop connect end to end. It used a stratified sample of 512 training windows (256 positive) and a sample of 256 validation windows (5 positive), capped at ten training batches and five validation batches. The run completed with training loss 0.658682 and validation loss 0.654960. These losses confirm that the short run completed; they are not test metrics and do not establish predictive performance. The held-out test split was not used in this smoke test. No Week 7 figure or chart was produced.
+
+The reusable pipeline is in `src/features/sequence_splits.py`, `src/features/tft_imbalance.py`, `src/features/tft_timeseries.py`, `src/features/tft_model.py`, and `src/features/tft_smoke.py`. Run the smoke test with `python -m src.features.tft_smoke`. Split counts and time boundaries are recorded in `experiments/eda/week7_sequence_split_summary.csv`.
+
 ## Section V
 ### Conclusion
 

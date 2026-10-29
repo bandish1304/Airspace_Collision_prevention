@@ -1,4 +1,4 @@
-"""Sliding-window trajectory sequences for sequence models (Week 6, step 2).
+"""Sliding-window trajectory sequences for sequence models (Week 7, step 1).
 
 A window is ``window_frames`` consecutive observations of one aircraft pair.
 Observations are consecutive when the gap between them is at most
