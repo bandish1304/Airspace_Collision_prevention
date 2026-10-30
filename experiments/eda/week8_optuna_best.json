@@ -1,0 +1,20 @@
+{
+  "best_trial": 11,
+  "validation_pr_auc": 0.8424109941802413,
+  "best_params": {
+    "attention_head_size": 2,
+    "hidden_size": 64,
+    "dropout": 0.24154374089198208,
+    "learning_rate": 0.002875315453940583
+  },
+  "selection_metric": "validation PR-AUC (average precision)",
+  "data": {
+    "train_windows": 8000,
+    "train_positive": 4000,
+    "validation_windows": 20000,
+    "validation_positive": 213
+  },
+  "n_trials": 12,
+  "max_epochs": 3,
+  "torch_version": "2.14.1+cpu"
+}
