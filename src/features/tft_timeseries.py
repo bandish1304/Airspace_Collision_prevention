@@ -65,7 +65,7 @@ def build_timeseries_dataset(
     feature_names: list[str],
 ) -> TimeSeriesDataSet:
     """Create one encoder-plus-target sequence per window for a scalar TFT."""
-    frame = _window_frame(windows, labels, feature_names)
+    frame = build_timeseries_frame(windows, labels, feature_names)
     encoder_length = windows.shape[1]
     return TimeSeriesDataSet(
         frame,
@@ -85,11 +85,12 @@ def build_timeseries_dataset(
     )
 
 
-def _window_frame(
+def build_timeseries_frame(
     windows: np.ndarray,
     labels: np.ndarray,
     feature_names: list[str],
 ) -> pd.DataFrame:
+    """Create the intermediate frame used to fit or reuse dataset transforms."""
     if windows.ndim != 3:
         raise ValueError("windows must have shape (samples, time, features).")
     if windows.shape[0] == 0:
@@ -136,7 +137,7 @@ def validation_dataset(
     """Create a validation dataset using training-fitted encoders and scalers."""
     return TimeSeriesDataSet.from_dataset(
         training_dataset,
-        _window_frame(windows, labels, feature_names),
+        build_timeseries_frame(windows, labels, feature_names),
         predict=False,
         stop_randomization=True,
     )
