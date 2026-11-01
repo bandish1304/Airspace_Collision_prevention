@@ -1,0 +1,13 @@
+{
+  "note": "Row-level McNemar ignores repeated observations of the same pair; treat as optimistic.",
+  "detected_conflicts_among_positives": {
+    "gnn_only_correct": 61,
+    "tft_only_correct": 174,
+    "p_value": 9.028403576559689e-14
+  },
+  "correct_rejections_among_negatives": {
+    "gnn_only_correct": 281,
+    "tft_only_correct": 1437,
+    "p_value": 1.1454018909713179e-186
+  }
+}

@@ -226,6 +226,31 @@ A one-epoch CPU smoke test checked that the real-data windows, training-only SMO
 
 The reusable pipeline is in `src/features/sequence_splits.py`, `src/features/tft_imbalance.py`, `src/features/tft_timeseries.py`, `src/features/tft_model.py`, and `src/features/tft_smoke.py`. Run the smoke test with `python -m src.features.tft_smoke`. Split counts and time boundaries are recorded in `experiments/eda/week7_sequence_split_summary.csv`.
 
+**Week 9 — Full-data TFT training.** The selected Week 8 configuration (2 attention heads, hidden size 64, dropout 0.242 and learning rate 0.002875) was trained on all 351,090 SMOTE-resampled training windows. Validation used all 403,376 original validation windows; the held-out test session was not loaded. Training used batches of 128, early stopping on validation loss (patience 8), and the model's `ReduceLROnPlateau` scheduler.
+
+**Observations.** Training stopped after 18 epochs when validation loss had not improved for eight epochs. The best checkpoint was from epoch 9 (validation loss 0.012073); the final validation loss was 0.023560. The learning-rate scheduler monitored validation loss but did not reduce the learning rate, which remained 0.002875.
+
+**Result.** The best checkpoint, final checkpoint, training configuration, and Lightning logs were saved under `models/week9_tft/`. The 12 Optuna trials, selected model, checkpoints, and training history were logged to MLflow in run `1ed21cfaa33d41b9b66ec4e7b070c36c` (`week9_tft_final_training`). The held-out test set was not used, so these validation losses are training diagnostics—not test metrics or evidence of prediction quality. The full-data CPU run took several hours.
+
+**Week 10 — GNN vs TFT on the held-out test session.** The tuned GraphSAGE (future-conflict model, hidden size 64, learning rate 0.001) and the tuned TFT (epoch-9 checkpoint) each scored the held-out evening session once. The two models define their targets differently: GraphSAGE scores candidate pairs within 15 NM at one snapshot and predicts a new conflict within 60 seconds, excluding pairs already in conflict; the TFT needs 30 frames of history. The comparison therefore uses the pair observations both models scored (52,549 pairs, 134 snapshots, 791 positives) and the GraphSAGE `future_conflict` label. This is 49.6% of GraphSAGE's 105,856 test pairs, because the first frames of the session have no 30-frame history. Decision thresholds were chosen on the matching validation pairs only, using the project's 5:1 false-negative cost rule (GraphSAGE 0.934, TFT 0.776).
+
+| Metric | GraphSAGE | TFT | Difference (TFT - GNN) | 95% CI | Holm-adjusted p |
+|---|---:|---:|---:|---:|---:|
+| Precision | 0.241 | 0.525 | +0.284 | [0.237, 0.331] | ≤0.006 |
+| Recall | 0.707 | 0.850 | +0.143 | [0.077, 0.204] | ≤0.006 |
+| F1 | 0.359 | 0.649 | +0.290 | [0.240, 0.338] | ≤0.006 |
+| AUROC | 0.970 | 0.995 | +0.025 | [0.019, 0.030] | ≤0.006 |
+| Average precision | 0.218 | 0.789 | +0.571 | [0.508, 0.621] | ≤0.006 |
+| False negative rate | 0.293 | 0.150 | -0.143 | [-0.204, -0.077] | ≤0.006 |
+
+![GraphSAGE vs TFT on the shared test pairs](experiments/figures/week10_gnn_vs_tft.png)
+
+The left panel shows precision-recall curves with each model's validation-chosen operating point; the right panel shows each metric difference with its 95% interval. The TFT was ahead on all six metrics. Because repeated observations of one aircraft pair are not independent, the intervals and p-values come from a paired bootstrap that resamples 2,693 aircraft pairs (2,000 resamples) rather than rows. The p-values sit at the floor of what 2,000 resamples can show: the TFT was ahead in every resample. A row-level McNemar test agrees but ignores the repeated rows, so it is more optimistic.
+
+These results come from one test session on one date and cover only the pairs both models can score. The bootstrap does not account for dependence between different pairs that share an aircraft, and the label is the rule-based future-conflict definition, not confirmed collisions. At a fixed 0.5 threshold the TFT's lead persists (F1 0.549 against 0.137). Each model's own full test set is saved in `experiments/eda/week10_shared_harness_metrics.csv` for reference; the TFT's full-window figures are not comparable because they include pairs already in conflict.
+
+Reproduce with `python -m src.evaluation.week10_test_set`, `python -m src.evaluation.week10_validation_scores`, `python -m src.evaluation.week10_metrics`, `python -m src.evaluation.week10_significance`, and `python -m src.evaluation.week10_comparison`. Results are in `experiments/eda/week10_shared_harness_metrics.csv`, `week10_significance_tests.csv`, `week10_comparison_table.csv`, and `week10_test_alignment.json`.
+
 ## Section V
 ### Conclusion
 

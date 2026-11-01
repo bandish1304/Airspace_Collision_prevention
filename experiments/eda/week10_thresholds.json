@@ -1,0 +1,26 @@
+{
+  "shared:GraphSAGE (tuned)": {
+    "threshold": 0.9339784979820251,
+    "chosen_on": "validation",
+    "validation_pairs": 85023,
+    "validation_positives": 1324
+  },
+  "shared:TFT (tuned)": {
+    "threshold": 0.7762741,
+    "chosen_on": "validation",
+    "validation_pairs": 85023,
+    "validation_positives": 1324
+  },
+  "context_gnn_full_test_pairs:GraphSAGE (tuned)": {
+    "threshold": 0.9339784979820251,
+    "chosen_on": "validation",
+    "validation_pairs": 186418,
+    "validation_positives": 3195
+  },
+  "context_tft_full_test_windows:TFT (tuned)": {
+    "threshold": 0.5646828,
+    "chosen_on": "validation",
+    "validation_pairs": 403376,
+    "validation_positives": 4513
+  }
+}

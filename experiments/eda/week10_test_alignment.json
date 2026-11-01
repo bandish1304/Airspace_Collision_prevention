@@ -1,0 +1,32 @@
+{
+  "shared_label": "future_conflict (new conflict within 60 s, GNN definition)",
+  "gnn_pairs": 105856,
+  "gnn_positive_pairs": 1577,
+  "gnn_snapshots": 166,
+  "tft_windows": 234282,
+  "tft_positive_windows": 2442,
+  "aligned_pairs": 52549,
+  "aligned_positive_pairs": 791,
+  "aligned_snapshots": 134,
+  "gnn_pair_coverage": 0.4964196644498186,
+  "gnn_positives_without_tft_window": 786,
+  "tft_windows_outside_gnn_pairs": 181733,
+  "tft_already_risky_among_aligned": 0,
+  "label_agreement": {
+    "both_positive": 791,
+    "future_conflict_only": 0,
+    "tft_target_only": 137,
+    "both_negative": 51621
+  },
+  "test_session": "states_socal_session_1791427160_07-39PM.csv",
+  "tft_checkpoint": "models\\week9_tft\\week9_tft_best.ckpt",
+  "tft_checkpoint_sha256": "0b82133b90e83f6ef851f0608467c1c618ae2265f0a751172220fc90f1d8d610",
+  "tft_best_epoch": 9,
+  "gnn_predictions": "data\\processed\\graphsage_tuning\\test_predictions.csv",
+  "gnn_predictions_sha256": "3f7e8435a76042a614ca44c125366a5bd281bf10b456c241781bccc71ed9a9c1",
+  "gnn_best_epoch": 5,
+  "gnn_hidden_channels": 64,
+  "gnn_learning_rate": 0.001,
+  "aligned_predictions": "data\\processed\\week10_comparison\\aligned_test_predictions.csv",
+  "each_model_scored_test_once": true
+}
