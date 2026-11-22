@@ -1,0 +1,20 @@
+{
+  "full_tft": {
+    "threshold": 0.7443080544471741,
+    "chosen_on": "validation",
+    "validation_windows": 403376,
+    "validation_positives": 4513
+  },
+  "no_learned_variable_selection": {
+    "threshold": 0.6707982420921326,
+    "chosen_on": "validation",
+    "validation_windows": 403376,
+    "validation_positives": 4513
+  },
+  "encoder_15": {
+    "threshold": 0.9199682474136353,
+    "chosen_on": "validation",
+    "validation_windows": 403376,
+    "validation_positives": 4513
+  }
+}

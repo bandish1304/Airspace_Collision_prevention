@@ -4,7 +4,9 @@ import numpy as np
 from pytorch_forecasting import TimeSeriesDataSet
 
 from src.features.tft_timeseries import (
+    SHORT_ENCODER_LENGTH,
     build_timeseries_dataset,
+    shorten_encoder_windows,
     validation_dataset,
 )
 
@@ -47,6 +49,26 @@ class TFTTimeSeriesTests(unittest.TestCase):
             build_timeseries_dataset(
                 self.windows, self.labels[:2], self.features
             )
+
+    def test_shortens_windows_to_the_most_recent_encoder_frames(self):
+        shortened = shorten_encoder_windows(self.windows, 3)
+
+        self.assertEqual(shortened.shape, (8, 3, 2))
+        np.testing.assert_array_equal(shortened, self.windows[:, -3:, :])
+
+    def test_week11_short_encoder_is_half_the_baseline_length(self):
+        windows = np.arange(2 * 30 * 2, dtype=np.float32).reshape(2, 30, 2)
+
+        self.assertEqual(SHORT_ENCODER_LENGTH, 15)
+        shortened = shorten_encoder_windows(windows, SHORT_ENCODER_LENGTH)
+        self.assertEqual(shortened.shape, (2, 15, 2))
+        np.testing.assert_array_equal(shortened, windows[:, -15:, :])
+
+    def test_rejects_invalid_shortened_encoder_length(self):
+        with self.assertRaisesRegex(ValueError, "at least 1"):
+            shorten_encoder_windows(self.windows, 0)
+        with self.assertRaisesRegex(ValueError, "cannot exceed"):
+            shorten_encoder_windows(self.windows, 7)
 
 
 if __name__ == "__main__":

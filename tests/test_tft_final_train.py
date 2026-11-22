@@ -12,7 +12,10 @@ from src.features.tft_final_train import (
     checkpoint_completed_epochs,
 )
 from src.features.tft_model import build_tft_model
-from src.features.tft_timeseries import build_timeseries_dataset
+from src.features.tft_timeseries import (
+    build_timeseries_dataset,
+    shorten_encoder_windows,
+)
 
 
 class TFTFinalTrainingTests(unittest.TestCase):
@@ -68,6 +71,25 @@ class TFTFinalTrainingTests(unittest.TestCase):
 
         self.assertEqual(tuple(prediction.shape), (2, 1, 1))
         self.assertTrue(torch.isfinite(loss))
+
+    def test_collator_supports_shortened_encoder_windows(self) -> None:
+        shortened_windows = shorten_encoder_windows(self.windows, 15)
+        training_dataset = build_timeseries_dataset(
+            shortened_windows, self.labels, self.features
+        )
+        collator = TFTArrayCollator(training_dataset)
+        batch_x, _ = collator(
+            [
+                (
+                    torch.from_numpy(shortened_windows[index]),
+                    torch.tensor(self.labels[index]),
+                )
+                for index in range(2)
+            ]
+        )
+
+        self.assertEqual(tuple(batch_x["encoder_cont"].shape), (2, 15, 8))
+        self.assertEqual(tuple(batch_x["decoder_cont"].shape), (2, 1, 8))
 
     def test_checkpoint_template_reuses_training_transforms(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

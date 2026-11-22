@@ -5,7 +5,12 @@ import pandas as pd
 import torch
 from pytorch_forecasting import TimeSeriesDataSet
 
-from src.features.tft_model import BinaryCrossEntropyWithLogits, build_tft_model
+from src.features.tft_model import (
+    BinaryCrossEntropyWithLogits,
+    EqualWeightVariableSelection,
+    TFTWithoutLearnedVariableSelection,
+    build_tft_model,
+)
 
 
 class TFTModelTests(unittest.TestCase):
@@ -74,6 +79,28 @@ class TFTModelTests(unittest.TestCase):
             build_tft_model(dataset, hidden_size=0)
         with self.assertRaisesRegex(ValueError, "dropout"):
             build_tft_model(dataset, dropout=1.0)
+
+    def test_builds_tft_without_learned_variable_selection_weights(self):
+        dataset = self.make_training_dataset()
+        model = build_tft_model(
+            dataset,
+            hidden_size=8,
+            attention_head_size=2,
+            hidden_continuous_size=4,
+            disable_learned_variable_selection=True,
+        )
+
+        self.assertIsInstance(model, TFTWithoutLearnedVariableSelection)
+        self.assertIsInstance(
+            model.encoder_variable_selection, EqualWeightVariableSelection
+        )
+        self.assertFalse(
+            hasattr(model.encoder_variable_selection, "flattened_grn")
+        )
+        batch = next(iter(dataset.to_dataloader(train=False, batch_size=4)))
+        output = model(batch[0])
+        self.assertEqual(tuple(output["prediction"].shape), (4, 1, 1))
+        self.assertTrue(torch.isfinite(output["prediction"]).all())
 
 
 if __name__ == "__main__":

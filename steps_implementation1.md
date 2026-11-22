@@ -68,24 +68,27 @@ WEEK 10 - Main Comparison (GNN vs TFT)
 3. Run statistical significance tests on the metric differences
 4. Produce a comparison table and figure for the paper
 
-WEEK 11 - Interpretability
+
+WEEK 11 - Ablation Studies
+1. Use the full TFT as the baseline and create one-component-at-a-time variants: replace learned variable-selection weights with fixed equal weights, shorten the input sequence, and (once static covariates are added to the inputs) remove static covariates
+2. Use a fixed 15-frame encoder for the shortened-input variant (half of the full TFT's 30-frame encoder) before running comparisons
+3. Retrain the full-TFT baseline and the currently supported variants (fixed equal variable weights and 15-frame encoder) using the same data splits and Week 9 training settings; run `python -m src.features.week11_ablation_train --resume --pause-after-epoch` to train one epoch at a time and resume between sessions. Check each variant's `progress.json` for completed epochs and validation loss. Defer the no-static-covariates variant until static covariates are added to the inputs
+4. Evaluate each completed variant using `python -m src.evaluation.week11_ablation`; select thresholds on validation data and reserve the held-out test set for final comparisons
+5. Compare each variant with the full TFT to estimate component contributions, reporting paired aircraft-pair bootstrap confidence intervals for test-metric differences
+
+WEEK 12 - Interpretability
 1. Extract TFT attention weights from the trained model
 2. Extract TFT variable selection scores from the trained model
-3. Build visualizations (heatmaps) of feature and time-step importance
-4. Interpret findings in relation to known collision precursors, noting limitations
-
-WEEK 12 - Ablation Studies
-1. Create a TFT variant without the variable selection network
-2. Create a TFT variant with a shortened input sequence
-3. Create a TFT variant without static covariates
-4. Retrain and evaluate each variant using the shared evaluation harness
-5. Compare each variant with the full TFT to estimate component contributions
+3. Aggregate and visualize feature and time-step importance across multiple samples and time steps, rather than relying on a single example
+4. Compare interpretations for high-risk and low-risk predictions, using representative examples and/or aggregated results
+5. Interpret findings in relation to known collision precursors, noting that attention and variable-selection scores describe model behavior and do not establish causation
 
 WEEK 13 - Drift Analysis and Visualization
-1. Split historical data into distinct time windows
-2. Measure feature-distribution shifts between windows
-3. Compare GNN and TFT performance across windows
-4. Build a static visualization of aircraft positions and predicted risk for a sample time window
+1. Define distinct chronological windows; use the training period as the feature-distribution reference and the earliest labeled held-out window as the performance baseline
+2. Measure feature-distribution shifts between the reference period and each later window, using methods appropriate to each feature type
+3. Evaluate the trained GNN and TFT as-is on each labeled time window using the shared evaluation harness; do not retrain on evaluation windows
+4. Compare each model's metrics across held-out windows and quantify degradation relative to the held-out performance baseline
+5. Build a static visualization of aircraft positions and predicted risk for a representative time window as an illustrative result
 
 WEEK 14 - Manuscript Drafting
 1. Draft the Introduction and Related Work sections
