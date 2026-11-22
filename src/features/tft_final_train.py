@@ -83,10 +83,8 @@ class TFTArrayCollator:
             name: index for index, name in enumerate(self.feature_names)
         }
         self.encoder_length = int(training_dataset.max_encoder_length)
-        if self.encoder_length != ENCODER_LENGTH:
-            raise ValueError(
-                f"Expected encoder length {ENCODER_LENGTH}; got {self.encoder_length}."
-            )
+        if self.encoder_length < 1:
+            raise ValueError("The training dataset must have a positive encoder length.")
         required_reals = {"time_idx", "relative_time_idx", *self.feature_names}
         if not required_reals.issubset(self.reals):
             raise ValueError("Training dataset real-variable schema is incomplete.")
@@ -94,6 +92,15 @@ class TFTArrayCollator:
     def __call__(self, samples: Sequence[tuple[Tensor, Tensor]]):
         windows = torch.stack([sample[0] for sample in samples]).cpu().numpy()
         targets = torch.stack([sample[1] for sample in samples]).to(torch.float32)
+        if windows.shape[1] != self.encoder_length:
+            raise ValueError(
+                f"Expected encoder length {self.encoder_length}; "
+                f"got {windows.shape[1]}."
+            )
+        if windows.shape[2] != len(self.feature_names):
+            raise ValueError(
+                "Input feature count does not match the training dataset schema."
+            )
         batch_size = len(samples)
         encoder_cont = np.empty(
             (batch_size, self.encoder_length, len(self.reals)), dtype=np.float32

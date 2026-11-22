@@ -15,6 +15,7 @@ from src.features.tft_dataset import TFTWindowDataset
 TARGET_COLUMN = "collision_risk_target"
 GROUP_COLUMN = "window_id"
 TIME_COLUMN = "time_idx"
+SHORT_ENCODER_LENGTH = 15
 
 
 def collect_windows(
@@ -83,6 +84,20 @@ def build_timeseries_dataset(
         add_encoder_length=False,
         allow_missing_timesteps=False,
     )
+
+
+def shorten_encoder_windows(windows: np.ndarray, encoder_length: int) -> np.ndarray:
+    """Keep the most recent encoder frames for the shortened-input ablation."""
+    if windows.ndim != 3:
+        raise ValueError("windows must have shape (samples, time, features).")
+    if encoder_length < 1:
+        raise ValueError("encoder_length must be at least 1.")
+    if encoder_length > windows.shape[1]:
+        raise ValueError(
+            f"encoder_length ({encoder_length}) cannot exceed the input length "
+            f"({windows.shape[1]})."
+        )
+    return np.ascontiguousarray(windows[:, -encoder_length:, :])
 
 
 def build_timeseries_frame(
